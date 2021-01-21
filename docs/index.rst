@@ -145,6 +145,7 @@ in the :ref:`introduction <howtoget>`.
 
    009/michelson
    009/proof_of_stake
+   009/consensus
    009/sapling
    009/voting
    009/glossary
