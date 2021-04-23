@@ -1,4 +1,4 @@
-.. _emmy:
+.. _consensus:
 
 The consensus algorithm in Tezos
 ================================
