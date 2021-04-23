@@ -134,13 +134,13 @@ around.
 Roll snapshots
 ~~~~~~~~~~~~~~
 
-Roll snapshots represent the state of rolls for a given block. Roll
-snapshots are taken every ``BLOCKS_PER_ROLL_SNAPSHOT`` = 256 blocks,
-which is 16 times per cycle. There is a tradeoff between memory
-consumption and economic efficiency. If roll snapshots are too frequent,
-they will consume a lot of memory. If they are too rare, strategic
-participants could purchase many tokens in anticipation of a snapshot
-and resell them right after.
+Roll snapshots represent the state of rolls for a given block. Roll snapshots
+are taken every ``BLOCKS_PER_ROLL_SNAPSHOT`` = 256 blocks, which is 16 times per
+cycle. There is a tradeoff between memory consumption and economic efficiency.
+If roll snapshots are too frequent, they will consume a lot of memory. If they
+are too rare, strategic participants could try to weigh more in consensus by
+purchasing many tokens in anticipation of a snapshot and resell them right
+after.
 
 Random seed
 -----------
