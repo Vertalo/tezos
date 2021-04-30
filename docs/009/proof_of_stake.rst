@@ -9,16 +9,17 @@ Proof-of-stake in Tezos
 consensus algorithm are chosen in function of their stake (the amount of coins a
 participant has).
 
-If one does not have enough stake to participate on its own or does not want
-to set up the needed infrastructure, (s)he can use **delegation**. Therefore, in
-Tezos, participants in the consensus algorithm are called **delegates**.
+If one does not have enough stake to participate on its own or does not want to
+set up the needed infrastructure, (s)he can use `delegation
+<https://tezos.gitlab.io/introduction/howtorun.html#delegating-your-coins>`_.
+Therefore, in Tezos, participants in the consensus algorithm are called
+**delegates**.
 
 Participants' rights are determined at the beginning of a **cycle** (a chunk of
-blocks) by a follow-the-satoshi strategy [1]_ starting from a **random seed**
-computed from information already found on the blockchain.
-
-.. [1] The mechanism is described in `the Tezos whitepaper
-       <https://tezos.com/static/white_paper-2dc8c02267a8fb86bd67a108199441bf.pdf>`_.
+blocks) by a `follow-the-coin strategy
+<https://wiki.tezosagora.org/whitepaper#follow-the-coin-procedure>`_ starting
+from a **random seed** computed from information already found on the
+blockchain.
 
 The remainder of this document contains a detailed description of
 the notions which are in bold in the text above.
@@ -26,9 +27,8 @@ the notions which are in bold in the text above.
 Further External Resources
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The original design of the proof-of-stake mechanism in Tezos can be
-found in the `whitepaper
-<https://whitepaper.io/document/376/tezos-whitepaper>`_.
+The original design of the proof-of-stake mechanism in Tezos can be found in the
+`whitepaper <https://whitepaper.io/document/376/tezos-whitepaper>`_.
 
 Another presentation of the Tezos' proof-of-stake mechanism can be found in the
 `Tezos agora wiki entry
@@ -38,7 +38,7 @@ The remainder of this document contains a detailed description of
 the notions which are in bold in the text above.
 
 Cycles
-------
+~~~~~~
 
 Blocks in Tezos are grouped into *cycles* of
 ``BLOCKS_PER_CYCLE`` = 4,096 blocks. Since blocks are at least
@@ -54,7 +54,7 @@ fork point is in a cycle more than ``PRESERVED_CYCLES`` = 5 cycles in the
 past (that is *at least* 14 days, 5 hours, and 20 minutes).
 
 Delegation
-----------
+~~~~~~~~~~
 
 Tezos uses a delegated proof-of-stake model. The acronym DPOS has come to
 designate a specific type of algorithm used, for instance in Bitshares.
@@ -62,7 +62,7 @@ This is *not* the model used in Tezos, though there is a concept
 of delegation.
 
 Delegates
-~~~~~~~~~
+---------
 
 Tokens are controlled through a private key called the
 *manager key*. Tezos accounts let the manager specify a public
@@ -83,7 +83,7 @@ Finally, delegate accounts (used for placing safety deposits) are
 automatically delegated to the delegate itself.
 
 Active and passive delegates
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+----------------------------
 
 A delegate can be marked as either active or passive. A passive delegate cannot
 participate in :ref:`the consensus algorithm <consensus>`.
@@ -100,7 +100,7 @@ period of time than the majority fork. ``PRESERVED_CYCLES``
 gives the majority chain a "headstart".
 
 Rolls
------
+~~~~~
 
 In theory, it would be possible to give each token a serial number
 and track the specific tokens assigned to specific delegates. However,
@@ -133,7 +133,7 @@ them, even if they control the underlying tokens and shuffle them
 around.
 
 Roll snapshots
-~~~~~~~~~~~~~~
+--------------
 
 Roll snapshots represent the state of rolls for a given block. Roll snapshots
 are taken every ``BLOCKS_PER_ROLL_SNAPSHOT`` = 256 blocks, which is 16 times per
@@ -144,7 +144,7 @@ purchasing many tokens in anticipation of a snapshot and resell them right
 after.
 
 Random seed
------------
+~~~~~~~~~~~
 
 Each cycle ``n`` is associated with a random seed. This seed is used to randomly
 select a roll snapshot from cycle ``n-2`` and to randomly select rolls in the

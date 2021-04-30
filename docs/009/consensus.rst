@@ -3,16 +3,16 @@
 The consensus algorithm in Tezos
 ================================
 
-This document provides a description of Emmy
-:math:`\hspace{-.1cm}`:superscript:`+`, the Tezos proof-of-stake consensus
-algorithm, as implemented in the current protocol (namely `PsFloren` on
-`mainnet`).
+This document provides a description of Emmy+, the Tezos proof-of-stake
+consensus algorithm, as implemented in the current protocol (namely `PsFloren`
+on `mainnet`).
 
 History
 -------
 
-Emmy [1]_ is a Nakamoto-style consensus first described in 2014, in the `Tezos
-whitepaper
+Before Emmy+, there was `Emmy
+<https://blog.nomadic-labs.com/emmy-an-improved-consensus-algorithm.html>`_, a
+Nakamoto-style consensus first described in 2014, in the `Tezos whitepaper
 <https://whitepaper.io/document/376/tezos-whitepaper>`_:
 
   our proof-of-stake mechanism is a mix of several ideas, including Slasher,
@@ -21,27 +21,22 @@ whitepaper
 
 Two years after, in 2016, the `Ouroboros paper
 <https://eprint.iacr.org/2016/889.pdf>`_ appeared, 10 days prior to the `Snow
-White paper <https://eprint.iacr.org/2016/919>`_, which describe a consensus
-algorithm that can be seen somewhat as:
+White paper <https://eprint.iacr.org/2016/919>`_, which both describe a
+consensus algorithm that can be seen somewhat as:
 
 - a direct translation of Bitcoin into a proof of stake system, and
 - a simplification of Emmy.
 
 The specificity of Emmy is the combined use of priorities and endorsements in
 the so called minimal delay function. Thanks to these concepts, Emmy offers a
-better protection against selfish baking and "shorter time to finality
-[2]_". The time to finality can be measured in terms of the number of
-confirmations a user must have seen for a block to be considered as final.
+better protection against selfish baking and a shorter time to finality. The
+time to finality can be measured in terms of the number of confirmations a user
+must have seen for a block to be considered as final. We recall that, being a
+Nakamoto-style consensus, Emmy provides *probabilistic* finality.
 
-Emmy :superscript:`+` came in 2019 as `an improvement over Emmy
-<https://blog.nomadic-labs.com/emmy-an-improved-consensus-algorithm.html>`_.
 
-.. [1] The name "Emmy" came later in `this post <https://blog.nomadic-labs.com/emmy-an-improved-consensus-algorithm.html>`_.
-
-.. [2] Being a Nakamoto-style consensus, Emmy provides probabilistic finality.
-
-Emmy :superscript:`+`
-------------------------
+Emmy+
+-----
 
 Terminology
 ~~~~~~~~~~~
@@ -63,10 +58,10 @@ a participant that has an endorsement slot at level :math:`\ell`.
 Minimal block delay function
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-At the heart of Emmy :superscript:`+`, there is the delay function. This function
+At the heart of Emmy+, there is the delay function. This function
 serves to compute the minimal time between blocks depending on the current block's
 priority `p`, and the number of endorsements `e` included in the current block.
-Namely, Emmy :superscript:`+` defines the minimal block delay function as follows:
+Namely, Emmy+ defines the minimal block delay function as follows:
 
 .. math::
    delay(p, e) = bd + dp \cdot p + de \cdot max(0, ie - e)
@@ -91,11 +86,11 @@ A block with timestamp :math:`t'`, priority :math:`p`, and :math:`e` endorsement
 - :math:`t' \geq t + delay(p,e)`, where :math:`t` is the timestamp of the
   previous block
 
-Emmy :superscript:`+` abstractly
+Emmy+ abstractly
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 We refer to someone trying to reach consensus by the generic notion of
-participant. Emmy :superscript:`+` can be described in an abstract manner as
+participant. Emmy+ can be described in an abstract manner as
 follows:
 
 - A participant continuously observes blocks and endorsements.
@@ -106,7 +101,7 @@ follows:
   soon as it can produce a valid block (see the validity condition
   above).
 
-Emmy :superscript:`+` concretely
+Emmy+ concretely
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 In Tezos, a participant:
@@ -115,7 +110,7 @@ In Tezos, a participant:
 - needs to have a minimum stake [3]_ of 8,000 ꜩ (which is called a **roll**)
 - needs to be active
 
-.. [3] Recall that Emmy :superscript:`+`, like Emmy, is :ref:`proof-of-stake <proof-of-stake>` based.
+.. [3] Recall that Emmy+, like Emmy, is :ref:`proof-of-stake <proof-of-stake>` based.
 
 There are two roles a participant can have:
 
@@ -156,19 +151,19 @@ after a number of cycles or burnt in case of proven bad behavior.
 Further External Resources
 --------------------------
 
-The following blog posts present the intuition behind Emmy :superscript:`+`:
+The following blog posts present the intuition behind Emmy+:
 
 -  https://blog.nomadic-labs.com/emmy-an-improved-consensus-algorithm.html
 -  https://blog.nomadic-labs.com/a-new-reward-formula-for-carthage.html.
 
-Emmy :superscript:`+` was further analyzed in:
+Emmy+ was further analyzed in:
 
 -  https://blog.nomadic-labs.com/analysis-of-emmy.html
 -  https://blog.nomadic-labs.com/on-defending-against-malicious-reorgs-in-tezos-proof-of-stake.html
 -  https://blog.nomadic-labs.com/emmy-in-the-partial-synchrony-model.html
 -  https://blog.nomadic-labs.com/the-case-of-mixed-forks-in-emmy.html
 
-A more high-level presentation of Emmy :superscript:`+` can be found in the
+A more high-level presentation of Emmy+ can be found in the
 `Tezos agora wiki entry
 <https://wiki.tezosagora.org/learn/baking/proofofstake/consensus>`_.
 
@@ -182,54 +177,6 @@ Blocks
 The Tezos blockchain is a linked list of blocks. Blocks contain a
 header and a list of operations. The header itself decomposes into a
 shell header (common to all protocols) and a protocol-specific header.
-
-Shell header
-~~~~~~~~~~~~
-
-The shell header contains
-
--  ``level``: the height of the block, from the genesis block
--  ``proto``: number of protocol changes since genesis (mod 256)
--  ``predecessor``: the hash of the preceding block.
--  ``timestamp``: the timestamp at which the block is claimed to have
-   been created.
--  ``validation_pass``: number of validation passes (also number of
-   lists of lists of operations)
--  ``fitness``: a sequence of sequences of unsigned bytes, ordered by
-   length and then lexicographically. It represents the claimed fitness
-   of the chain ending in this block.
--  ``operations_hash``: the hash of a list of root hashes of Merkle
-   trees of operations. There is one list of operations per
-   validation pass.
--  ``context`` Hash of the state of the context after application of
-   this block.
-
-Protocol header
-~~~~~~~~~~~~~~~
-
--  ``signature``: a digital signature of the shell and protocol headers
-   (excluding the signature itself).
--  ``priority``: the position in the priority list of delegates at which
-   the block was baked.
--  ``seed_nonce_hash``: a commitment to a random number, used to
-   generate entropy on the chain. Present in only one out of
-   ``BLOCKS_PER_COMMITMENT`` = 32 blocks.
--  ``proof_of_work_nonce``: a nonce used to pass a low-difficulty
-   proof-of-work for the block, as a spam prevention measure.
-
-Block size
-~~~~~~~~~~
-
-Tezos does not download blocks all at once but rather considers
-headers and various types of operations separately.  Transactions are
-limited by a total maximum size of 512kB (that is 5MB every 10 minutes
-at most).
-
-Consensus operations (endorsements, denunciations, reveals) are
-limited in terms of number of operations (though the defensive
-programming style also puts limits on the size of operations it
-expects). This ensures that critical operations do not compete with
-transactions for block space.
 
 Fitness
 ~~~~~~~
