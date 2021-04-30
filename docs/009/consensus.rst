@@ -41,11 +41,11 @@ Emmy+
 Terminology
 ~~~~~~~~~~~
 
-An **endorsement** of a block is an operation consisting of a signature on that
-block.
+An **endorsement** of a **block** is an operation consisting of a signature on
+that block.
 
 Each block has a timestamp, a priority (a natural number), and a number of
-endorsements for the block at the previous level. Each block is signed.
+endorsements for the block at the previous **level**. Each block is signed.
 
 At each level, two lists of **slots** are built: a (conceptually) infinite list
 of baking slots and a list of 32 endorsing slots. A participant can appear several
@@ -87,14 +87,14 @@ A block with timestamp :math:`t'`, priority :math:`p`, and :math:`e` endorsement
   previous block
 
 Emmy+ abstractly
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~
 
 We refer to someone trying to reach consensus by the generic notion of
 participant. Emmy+ can be described in an abstract manner as
 follows:
 
 - A participant continuously observes blocks and endorsements.
-- A participant always adopts the longest (valid) chain it observes.
+- A participant always adopts the **fittest**, that is, the longest (valid) chain it observes.
 - A participant that has :math:`e` endorsement slots at level :math:`\ell`, emits
   :math:`e` endorsements for the first block it observes at level :math:`\ell`.
 - A participant produces a block as soon as it is allowed to, that is, as
@@ -102,15 +102,13 @@ follows:
   above).
 
 Emmy+ concretely
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~
 
 In Tezos, a participant:
 
 - is identified by a public key and signs blocks with the corresponding private key
-- needs to have a minimum stake [3]_ of 8,000 ꜩ (which is called a **roll**)
+- needs to have a minimum :ref:`stake <proof-of-stake>` of 8,000 ꜩ (which is called a **roll**)
 - needs to be active
-
-.. [3] Recall that Emmy+, like Emmy, is :ref:`proof-of-stake <proof-of-stake>` based.
 
 There are two roles a participant can have:
 
@@ -177,6 +175,12 @@ Blocks
 The Tezos blockchain is a linked list of blocks. Blocks contain a
 header and a list of operations. The header itself decomposes into a
 shell header (common to all protocols) and a protocol-specific header.
+
+Level
+~~~~~
+The position of a block in the chain, that is, the number of blocks
+since the genesis block, where the genesis block is at level 0.
+
 
 Fitness
 ~~~~~~~
