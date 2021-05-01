@@ -188,8 +188,7 @@ Fitness
 To each block, we associate a measure of `fitness` which determines the
 quality of the chain leading to that block. This measure is simply the
 length of the chain (as in Bitcoin). More precisely, the fitness of a
-block is 1 plus the fitness of the previous block. The shell changes
-the head of the chain to the valid block that has the highest fitness.
+block is 1 plus the fitness of the previous block.
 
 Baking
 ------
