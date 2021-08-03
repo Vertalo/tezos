@@ -32,6 +32,15 @@ build-deps:
 	eval $$(opam env --root="$(OPAMROOT_DIR)" --set-root --switch="$(OPAMSWITCH_DIR)" --set-switch) $(MAKE) 'build-deps'
 	$(MAKE) -f Makefile.vertalo build-hacl
 
+install-lmdb:
+	eval $$(opam env --root="$(OPAMROOT_DIR)" --set-root --switch="$(OPAMSWITCH_DIR)" --set-switch) opam install tezos-lmdb
+
+upgrade-jbuilder:
+	eval $$(opam env --root="$(OPAMROOT_DIR)" --set-root --switch="$(OPAMSWITCH_DIR)" --set-switch) opam upgrade jbuilder
+
+opam-list:
+	eval $$(opam env --root="$(OPAMROOT_DIR)" --set-root --switch="$(OPAMSWITCH_DIR)" --set-switch) opam list
+
 opamenv:
 	xargs -S 1024 -I{} sh -c 'eval $$(opam env --root="$(OPAMROOT_DIR)" --set-root --switch="$(OPAMSWITCH_DIR)" --set-switch) {}'
 
