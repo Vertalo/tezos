@@ -3,7 +3,7 @@ cd tezos
 git checkout v9-release-freebsd
 gmake -f Makefile.vertalo init
 gmake -f Makefile.vertalo build-deps
-gmake -f Makefile.vertalo rebuild-jbuilder
+gmake -f Makefile.vertalo upgrade-jbuilder
 gmake -f Makefile.vertalo install-lmdb
 gmake -f Makefile.vertalo all
 
