@@ -4,10 +4,9 @@
  (libraries       rresult)
  (foreign_stubs
   (language c)
-  (names mdb midl lmdb_stubs)
+  (names lmdb_stubs)
   (flags -lpthread -Wstringop-overflow=0
-  	 (:include c_flags.sexp))))
-
-(rule
+         (:include c_flags.sexp)))
+  (library_flags (-cclib -llmdb)))(rule
  (targets c_flags.sexp)
  (action  (run %{exe:../config/discover.exe} -ocamlc %{ocamlc})))

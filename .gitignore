@@ -8,6 +8,7 @@ __pycache__
 /_build
 /_build_rust
 /_opam
+/_root
 /_docker_build
 /docs/_build
 /docs/api/tezos-client.html

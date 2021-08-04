@@ -1,0 +1,49 @@
+# For GNU make
+C_INCLUDE_PATH:=/usr/local/include:${C_INCLUDE_PATH}
+export C_INCLUDE_PATH
+LD_LIBRARY_PATH:=/usr/local/lib:${LD_LIBRARY_PATH}
+export LD_LIBRARY_PATH
+# RUST_VERSION=1.44.1
+
+SHELL:=/bin/sh
+THIS_DIR:=$(shell pwd -P)
+OPAMROOT_DIR:=$(THIS_DIR)/_root
+OPAMSWITCH_DIR:=$(THIS_DIR)
+OCAML_COMPILER:=ocaml-base-compiler.4.10.2
+export OPAMSOLVERTIMEOUT:=2400
+
+init:
+	opam init --bare --no-opamrc --no-setup --root="$(OPAMROOT_DIR)"
+	opam switch --root="$(OPAMROOT_DIR)" create "$(OPAMSWITCH_DIR)" "$(OCAML_COMPILER)"
+
+pin-hacl:
+	eval $$(opam env --root="$(OPAMROOT_DIR)" --set-root --switch="$(OPAMSWITCH_DIR)" --set-switch) opam pin hacl-star-raw vendors/hacl-star
+	eval $$(opam env --root="$(OPAMROOT_DIR)" --set-root --switch="$(OPAMSWITCH_DIR)" --set-switch) opam pin hacl-star vendors/hacl-star
+
+build-hacl:
+	eval $$(opam env --root="$(OPAMROOT_DIR)" --set-root --switch="$(OPAMSWITCH_DIR)" --set-switch) opam install hacl-star-raw
+	eval $$(opam env --root="$(OPAMROOT_DIR)" --set-root --switch="$(OPAMSWITCH_DIR)" --set-switch) opam install hacl-star
+
+rebuild-hacl:
+	eval $$(opam env --root="$(OPAMROOT_DIR)" --set-root --switch="$(OPAMSWITCH_DIR)" --set-switch) opam reinstall hacl-star-raw
+	eval $$(opam env --root="$(OPAMROOT_DIR)" --set-root --switch="$(OPAMSWITCH_DIR)" --set-switch) opam reinstall hacl-star
+
+build-deps:
+	eval $$(opam env --root="$(OPAMROOT_DIR)" --set-root --switch="$(OPAMSWITCH_DIR)" --set-switch) $(MAKE) 'build-deps'
+	$(MAKE) -f Makefile.vertalo build-hacl
+
+install-lmdb:
+	eval $$(opam env --root="$(OPAMROOT_DIR)" --set-root --switch="$(OPAMSWITCH_DIR)" --set-switch) opam install tezos-lmdb
+
+upgrade-jbuilder:
+	eval $$(opam env --root="$(OPAMROOT_DIR)" --set-root --switch="$(OPAMSWITCH_DIR)" --set-switch) opam upgrade jbuilder
+
+opam-list:
+	eval $$(opam env --root="$(OPAMROOT_DIR)" --set-root --switch="$(OPAMSWITCH_DIR)" --set-switch) opam list
+
+opamenv:
+	xargs -S 1024 -I{} sh -c 'eval $$(opam env --root="$(OPAMROOT_DIR)" --set-root --switch="$(OPAMSWITCH_DIR)" --set-switch) {}'
+
+%:
+	eval $$(opam env --root="$(OPAMROOT_DIR)" --set-root --switch="$(OPAMSWITCH_DIR)" --set-switch) $(MAKE) '$*'
+
