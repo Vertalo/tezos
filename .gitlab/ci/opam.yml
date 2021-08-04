@@ -52,6 +52,11 @@ opam:numerics:
   variables:
     package: numerics
 
+opam:secp256k1-internal:
+  extends: .opam_template
+  variables:
+    package: secp256k1-internal
+
 opam:pyml-plot:
   extends: .opam_template
   variables:

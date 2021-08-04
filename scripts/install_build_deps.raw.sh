@@ -23,4 +23,4 @@ opam depext conf-gmp conf-libev conf-perl conf-pkg-config conf-hidapi ctypes-for
 ## `--dev`. But this would probably break the CI, so we postponed this
 ## change until someone have some spare time. (@pirbo, @hnrgrgr)
 
-opam install $opams --deps-only --with-test --criteria="-notuptodate,-changed,-removed"
+opam install $opams --deps-only --with-test
