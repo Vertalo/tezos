@@ -6,6 +6,8 @@ src_dir="$(dirname "$script_dir")"
 #shellcheck source=scripts/version.sh
 . "$script_dir"/version.sh
 
+env C_INCLUDE_PATH=/usr/local/include opam pin tezos-lmdb https://github.com/vertalo/ocaml-lmdb.gi
+
 opams=$(find "$src_dir/vendors" "$src_dir/src" -name \*.opam -print)
 
 export OPAMYES=${OPAMYES:=true}
