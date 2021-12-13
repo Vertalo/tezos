@@ -7,6 +7,7 @@ src_dir="$(dirname "$script_dir")"
 . "$script_dir"/version.sh
 
 env C_INCLUDE_PATH=/usr/local/include opam pin tezos-lmdb https://github.com/vertalo/ocaml-lmdb.git --yes
+opam pin pyml https://github.com/thierry-martinez/pyml.git#20210924
 
 opams=$(find "$src_dir/vendors" "$src_dir/src" -name \*.opam -print)
 
