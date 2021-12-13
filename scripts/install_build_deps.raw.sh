@@ -14,6 +14,9 @@ else
     opams=$(find "$src_dir/vendors" "$src_dir/src" "$src_dir/tezt" -name \*.opam -not -path "$src_dir/src/bin_tps_evaluation/*" -print)
 fi
 
+env C_INCLUDE_PATH=/usr/local/include opam pin tezos-lmdb https://github.com/vertalo/ocaml-lmdb.git --yes
+opam pin pyml https://github.com/thierry-martinez/pyml.git#20210924
+
 export OPAMYES=${OPAMYES:=true}
 export OPAMSOLVERTIMEOUT=1200
 
