@@ -6,12 +6,15 @@ src_dir="$(dirname "$script_dir")"
 #shellcheck source=scripts/version.sh
 . "$script_dir"/version.sh
 
-env C_INCLUDE_PATH=/usr/local/include opam pin tezos-lmdb https://github.com/vertalo/ocaml-lmdb.git --yes
-opam pin pyml https://github.com/thierry-martinez/pyml.git#20210924
-
 opams=$(find "$src_dir/vendors" "$src_dir/src" -name \*.opam -print)
 
 export OPAMYES=${OPAMYES:=true}
+export OPAMSOLVERTIMEOUT=1200
+
+env C_INCLUDE_PATH=/usr/local/include opam pin tezos-lmdb https://github.com/vertalo/ocaml-lmdb.git
+opam pin pyml https://github.com/thierry-martinez/pyml.git#20210924
+opam pin lwt 5.4.2
+
 
 ## In another ideal world, this list should be extracted from the pinned
 ## packages and filter only conf-* packages
