@@ -78,7 +78,7 @@ fi
 
 # Must be done before install_build_deps.raw.sh because install_build_deps.raw.sh installs
 # opam packages that depend on Rust.
-"$script_dir"/install_build_deps.rust.sh
+# "$script_dir"/install_build_deps.rust.sh
 
 opam install --yes opam-depext
 
