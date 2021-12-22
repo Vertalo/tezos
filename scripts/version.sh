@@ -14,8 +14,8 @@
 ## with both the make and sh syntax
 
 export ocaml_version=4.12.1
-export opam_version=2
-export recommended_rust_version=1.52.1
+export opam_version=2.0
+export recommended_rust_version=1.55.0
 export recommended_node_version=14.12.0
 
 ## full_opam_repository is a commit hash of the public OPAM repository, i.e.
