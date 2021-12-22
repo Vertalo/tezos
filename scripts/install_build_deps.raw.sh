@@ -11,9 +11,10 @@ opams=$(find "$src_dir/vendors" "$src_dir/src" -name \*.opam -print)
 export OPAMYES=${OPAMYES:=true}
 export OPAMSOLVERTIMEOUT=1200
 
-env C_INCLUDE_PATH=/usr/local/include opam pin tezos-lmdb https://github.com/vertalo/ocaml-lmdb.git
-opam pin pyml https://github.com/thierry-martinez/pyml.git#20210924
-opam pin lwt 5.4.2
+env C_INCLUDE_PATH=/usr/local/include opam pin add tezos-lmdb https://github.com/vertalo/ocaml-lmdb.git
+opam pin add pyml https://github.com/thierry-martinez/pyml.git#20210924
+opam pin add bls12-381-unix git+https://gitlab.com/dannywillems/ocaml-bls12-381.git#e09af447e3a6757f490160e2c87578b1731dc786
+opam pin add lwt 5.4.2
 
 
 ## In another ideal world, this list should be extracted from the pinned
