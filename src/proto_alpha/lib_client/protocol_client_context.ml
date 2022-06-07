@@ -206,7 +206,7 @@ let () =
   @@ def
        "operation"
        ["internal"]
-       Protocol.Alpha_context.Operation.internal_operation_encoding ;
+       Protocol.Apply_results.internal_contents_encoding ;
   register
   @@ def
        "operation"
@@ -223,7 +223,7 @@ let () =
   @@ def
        "constants"
        ["parametric"]
-       Protocol.Alpha_context.Constants.parametric_encoding ;
+       Protocol.Alpha_context.Constants.Parametric.encoding ;
   register @@ def "nonce" [] Protocol.Alpha_context.Nonce.encoding ;
   register @@ def "block_header" [] Protocol.Alpha_context.Block_header.encoding ;
   register

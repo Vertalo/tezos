@@ -2,7 +2,7 @@
 (*                                                                           *)
 (* Open Source License                                                       *)
 (* Copyright (c) 2018 Dynamic Ledger Solutions, Inc. <contact@tezos.com>     *)
-(* Copyright (c) 2022 Trili Tech  <contact@trili.tech>                       *)
+(* Copyright (c) 2021-2022 Trili Tech, <contact@trili.tech>                  *)
 (*                                                                           *)
 (* Permission is hereby granted, free of charge, to any person obtaining a   *)
 (* copy of this software and associated documentation files (the "Software"),*)
@@ -25,6 +25,23 @@
 (*****************************************************************************)
 
 module Int_set = Set.Make (Compare.Int)
+
+module Sc_rollup_address_comparable = struct
+  include Sc_rollup_repr.Address
+
+  (* TODO: https://gitlab.com/tezos/tezos/-/issues/2648
+     Fill in real benchmarked values.
+     Need to create benchmark and fill in values.
+  *)
+  let compare_cost _rollup = Saturation_repr.safe_int 15
+end
+
+(* This will not create the map yet, as functions to consume gas have not 
+   been defined yet. However, it will make the type of the carbonated map 
+   available to be used in the definition of type back.
+*)
+module Sc_rollup_address_map_builder =
+  Carbonated_map.Make_builder (Sc_rollup_address_comparable)
 
 (*
 
@@ -206,7 +223,7 @@ end
 
 type back = {
   context : Context.t;
-  constants : Constants_repr.parametric;
+  constants : Constants_parametric_repr.t;
   round_durations : Round_repr.Durations.t;
   cycle_eras : Level_repr.cycle_eras;
   level : Level_repr.t;
@@ -227,9 +244,9 @@ type back = {
     Cycle_repr.Map.t;
   stake_distribution_for_current_cycle :
     Tez_repr.t Signature.Public_key_hash.Map.t option;
-  tx_rollups_seen : Tx_rollup_repr.Set.t;
-      (** Record the transaction rollups which have received at
-          least one message in a block. *)
+  tx_rollup_current_messages :
+    Tx_rollup_inbox_repr.Merkle.tree Tx_rollup_repr.Map.t;
+  sc_rollup_current_messages : Context.tree Sc_rollup_address_map_builder.t;
 }
 
 (*
@@ -328,19 +345,6 @@ let[@inline] update_non_consensus_operations_rev ctxt
 let[@inline] update_sampler_state ctxt sampler_state =
   update_back ctxt {ctxt.back with sampler_state}
 
-let[@inline] record_tx_rollup ctxt tx_rollup =
-  update_back
-    ctxt
-    {
-      ctxt.back with
-      tx_rollups_seen =
-        Tx_rollup_repr.Set.add tx_rollup ctxt.back.tx_rollups_seen;
-    }
-
-let[@inline] flush_tx_rollups ctxt =
-  ( update_back ctxt {ctxt.back with tx_rollups_seen = Tx_rollup_repr.Set.empty},
-    ctxt.back.tx_rollups_seen )
-
 type error += Too_many_internal_operations (* `Permanent *)
 
 type error += Block_quota_exceeded (* `Temporary *)
@@ -348,6 +352,8 @@ type error += Block_quota_exceeded (* `Temporary *)
 type error += Operation_quota_exceeded (* `Temporary *)
 
 type error += Stake_distribution_not_set (* `Branch *)
+
+type error += Sampler_already_set of Cycle_repr.t (* `Permanent *)
 
 let () =
   let open Data_encoding in
@@ -391,7 +397,23 @@ let () =
         "The stake distribution for the current cycle is not set.")
     Data_encoding.(empty)
     (function Stake_distribution_not_set -> Some () | _ -> None)
-    (fun () -> Stake_distribution_not_set)
+    (fun () -> Stake_distribution_not_set) ;
+  register_error_kind
+    `Permanent
+    ~id:"sampler_already_set"
+    ~title:"Sampler already set"
+    ~description:
+      "Internal error: Raw_context.set_sampler_for_cycle was called twice for \
+       a given cycle"
+    ~pp:(fun ppf c ->
+      Format.fprintf
+        ppf
+        "Internal error: sampler already set for cycle %a."
+        Cycle_repr.pp
+        c)
+    (obj1 (req "cycle" Cycle_repr.encoding))
+    (function Sampler_already_set c -> Some c | _ -> None)
+    (fun c -> Sampler_already_set c)
 
 let fresh_internal_nonce ctxt =
   if Compare.Int.(internal_nonce ctxt >= 65_535) then
@@ -517,6 +539,19 @@ let gas_consumed ~since ~until =
   | (Limited {remaining = before}, Limited {remaining = after}) ->
       Gas_limit_repr.Arith.sub before after
   | (_, _) -> Gas_limit_repr.Arith.zero
+
+(* Once gas consuming functions have been defined, 
+   we can instantiate the carbonated map. 
+   See [Sc_rollup_carbonated_map_maker] above.
+ *)
+
+module Gas = struct
+  type context = t
+
+  let consume = consume_gas
+end
+
+module Sc_rollup_carbonated_map = Sc_rollup_address_map_builder.Make (Gas)
 
 type missing_key_kind = Get | Set | Del | Copy
 
@@ -705,7 +740,7 @@ let get_proto_param ctxt =
 let add_constants ctxt constants =
   let bytes =
     Data_encoding.Binary.to_bytes_exn
-      Constants_repr.parametric_encoding
+      Constants_parametric_repr.encoding
       constants
   in
   Context.add ctxt constants_key bytes
@@ -716,7 +751,7 @@ let get_constants ctxt =
   | Some bytes -> (
       match
         Data_encoding.Binary.of_bytes_opt
-          Constants_repr.parametric_encoding
+          Constants_parametric_repr.encoding
           bytes
       with
       | None -> failwith "Internal error: cannot parse constants in context."
@@ -737,7 +772,7 @@ let check_inited ctxt =
       else storage_error (Incompatible_protocol_version s)
 
 let check_cycle_eras (cycle_eras : Level_repr.cycle_eras)
-    (constants : Constants_repr.parametric) =
+    (constants : Constants_parametric_repr.t) =
   let current_era = Level_repr.current_era cycle_eras in
   assert (
     Compare.Int32.(current_era.blocks_per_cycle = constants.blocks_per_cycle)) ;
@@ -774,17 +809,18 @@ let prepare ~level ~predecessor_timestamp ~timestamp ctxt =
         internal_nonces_used = Int_set.empty;
         remaining_block_gas =
           Gas_limit_repr.Arith.fp
-            constants.Constants_repr.hard_gas_limit_per_block;
+            constants.Constants_parametric_repr.hard_gas_limit_per_block;
         unlimited_operation_gas = true;
         consensus = Raw_consensus.empty;
         non_consensus_operations_rev = [];
         sampler_state = Cycle_repr.Map.empty;
         stake_distribution_for_current_cycle = None;
-        tx_rollups_seen = Tx_rollup_repr.Set.empty;
+        tx_rollup_current_messages = Tx_rollup_repr.Map.empty;
+        sc_rollup_current_messages = Sc_rollup_carbonated_map.empty;
       };
   }
 
-type previous_protocol = Genesis of Parameters_repr.t | Ithaca_012
+type previous_protocol = Genesis of Parameters_repr.t | Jakarta_013
 
 let check_and_update_protocol_version ctxt =
   (Context.find ctxt version_key >>= function
@@ -796,7 +832,7 @@ let check_and_update_protocol_version ctxt =
          failwith "Internal error: previously initialized context."
        else if Compare.String.(s = "genesis") then
          get_proto_param ctxt >|=? fun (param, ctxt) -> (Genesis param, ctxt)
-       else if Compare.String.(s = "ithaca_012") then return (Ithaca_012, ctxt)
+       else if Compare.String.(s = "jakarta_013") then return (Jakarta_013, ctxt)
        else Lwt.return @@ storage_error (Incompatible_protocol_version s))
   >>=? fun (previous_proto, ctxt) ->
   Context.add ctxt version_key (Bytes.of_string version_value) >|= fun ctxt ->
@@ -811,7 +847,7 @@ let[@warning "-32"] get_previous_protocol_constants ctxt =
   | Some bytes -> (
       match
         Data_encoding.Binary.of_bytes_opt
-          Constants_repr.Proto_previous.parametric_encoding
+          Constants_parametric_previous_repr.encoding
           bytes
       with
       | None ->
@@ -820,8 +856,8 @@ let[@warning "-32"] get_previous_protocol_constants ctxt =
              context."
       | Some constants -> Lwt.return constants)
 
-(* You should ensure that if the type `Constant_repr.parametric` is
-   different from the previous protocol or the value of these
+(* You should ensure that if the type `Constants_parametric_repr.t` is
+   different from `Constants_parametric_previous_repr.t` or the value of these
    constants is modified, is changed from the previous protocol, then
    you `propagate` these constants to the new protocol by writing them
    onto the context via the function `add_constants` or
@@ -847,20 +883,16 @@ let prepare_first_block ~level ~timestamp ctxt =
       Level_repr.create_cycle_eras [cycle_era] >>?= fun cycle_eras ->
       set_cycle_eras ctxt cycle_eras >>=? fun ctxt ->
       add_constants ctxt param.constants >|= ok
-  | Ithaca_012 ->
+  | Jakarta_013 ->
       get_previous_protocol_constants ctxt >>= fun c ->
-      let cycles_per_voting_period =
-        (* Ignore reminder if any *)
-        Int32.div c.blocks_per_voting_period c.blocks_per_cycle
-      in
       let constants =
-        Constants_repr.
+        Constants_parametric_repr.
           {
             preserved_cycles = c.preserved_cycles;
             blocks_per_cycle = c.blocks_per_cycle;
             blocks_per_commitment = c.blocks_per_commitment;
             blocks_per_stake_snapshot = c.blocks_per_stake_snapshot;
-            cycles_per_voting_period;
+            cycles_per_voting_period = c.cycles_per_voting_period;
             hard_gas_limit_per_operation = c.hard_gas_limit_per_operation;
             hard_gas_limit_per_block = c.hard_gas_limit_per_block;
             proof_of_work_threshold = c.proof_of_work_threshold;
@@ -879,8 +911,8 @@ let prepare_first_block ~level ~timestamp ctxt =
             min_proposal_quorum = c.min_proposal_quorum;
             liquidity_baking_subsidy = c.liquidity_baking_subsidy;
             liquidity_baking_sunset_level = c.liquidity_baking_sunset_level;
-            liquidity_baking_escape_ema_threshold =
-              c.liquidity_baking_escape_ema_threshold;
+            liquidity_baking_toggle_ema_threshold =
+              c.liquidity_baking_toggle_ema_threshold;
             minimal_block_delay = c.minimal_block_delay;
             delay_increment_per_round = c.delay_increment_per_round;
             consensus_committee_size = c.consensus_committee_size;
@@ -891,25 +923,50 @@ let prepare_first_block ~level ~timestamp ctxt =
             double_baking_punishment = c.double_baking_punishment;
             ratio_of_frozen_deposits_slashed_per_double_endorsement =
               c.ratio_of_frozen_deposits_slashed_per_double_endorsement;
-            initial_seed = None;
-            cache_script_size = 100_000_000;
-            cache_stake_distribution_cycles = 8;
-            cache_sampler_state_cycles = 8;
-            tx_rollup_enable = false;
-            (* TODO: https://gitlab.com/tezos/tezos/-/issues/2152
-               Transaction rollups parameters need to be refined,
-               currently the following values are merely
-               placeholders. *)
-            tx_rollup_origination_size = 60_000;
-            tx_rollup_hard_size_limit_per_inbox = 100_000;
-            tx_rollup_hard_size_limit_per_message = 5_000;
-            tx_rollup_commitment_bond = Tez_repr.of_mutez_exn 10_000_000_000L;
-            tx_rollup_finality_period = 2_000;
-            tx_rollup_withdraw_period = 60_000;
-            tx_rollup_max_unfinalized_levels = 2_100;
+            initial_seed = c.initial_seed;
+            cache_script_size = c.cache_script_size;
+            cache_stake_distribution_cycles = c.cache_stake_distribution_cycles;
+            cache_sampler_state_cycles = c.cache_sampler_state_cycles;
+            tx_rollup_enable = c.tx_rollup_enable;
+            tx_rollup_origination_size = c.tx_rollup_origination_size;
+            tx_rollup_hard_size_limit_per_inbox =
+              c.tx_rollup_hard_size_limit_per_inbox;
+            tx_rollup_hard_size_limit_per_message =
+              c.tx_rollup_hard_size_limit_per_message;
+            tx_rollup_max_withdrawals_per_batch =
+              c.tx_rollup_max_withdrawals_per_batch;
+            tx_rollup_max_ticket_payload_size =
+              c.tx_rollup_max_ticket_payload_size;
+            tx_rollup_commitment_bond = c.tx_rollup_commitment_bond;
+            tx_rollup_finality_period = c.tx_rollup_finality_period;
+            tx_rollup_withdraw_period = c.tx_rollup_withdraw_period;
+            tx_rollup_max_inboxes_count = c.tx_rollup_max_inboxes_count;
+            tx_rollup_max_messages_per_inbox =
+              c.tx_rollup_max_messages_per_inbox;
+            tx_rollup_max_commitments_count = c.tx_rollup_max_commitments_count;
+            tx_rollup_cost_per_byte_ema_factor =
+              c.tx_rollup_cost_per_byte_ema_factor;
+            tx_rollup_rejection_max_proof_size =
+              c.tx_rollup_rejection_max_proof_size;
+            tx_rollup_sunset_level = c.tx_rollup_sunset_level;
             sc_rollup_enable = false;
             (* The following value is chosen to prevent spam. *)
             sc_rollup_origination_size = 6_314;
+            sc_rollup_challenge_window_in_blocks = 20_160;
+            (* The following value is chosen to limit the maximal
+               length of an inbox refutation proof. *)
+            (* TODO: https://gitlab.com/tezos/tezos/-/issues/2556
+               The follow constants need to be refined. *)
+            sc_rollup_max_available_messages = 1_000_000;
+            (* TODO: https://gitlab.com/tezos/tezos/-/issues/2756
+               The following constants need to be refined. *)
+            sc_rollup_stake_amount_in_mutez = 32_000_000;
+            sc_rollup_commitment_frequency_in_blocks = 20;
+            (* 76 for Commitments entry + 4 for Commitment_stake_count entry
+               + 4 for Commitment_added entry
+               + 0 for Staker_count_update entry *)
+            sc_rollup_commitment_storage_size_in_bytes = 84;
+            sc_rollup_max_lookahead_in_blocks = 30_000l;
           }
       in
       add_constants ctxt constants >>= fun ctxt -> return ctxt)
@@ -1017,7 +1074,11 @@ let list ctxt ?offset ?length k = Context.list (context ctxt) ?offset ?length k
 let fold ?depth ctxt k ~order ~init ~f =
   Context.fold ?depth (context ctxt) k ~order ~init ~f
 
+let config ctxt = Context.config (context ctxt)
+
 module Proof = Context.Proof
+
+let length ctxt key = Context.length (context ctxt) key
 
 module Tree :
   Raw_context_intf.TREE
@@ -1082,6 +1143,8 @@ let verify_tree_proof proof f = Context.verify_tree_proof proof f
 
 let verify_stream_proof proof f = Context.verify_stream_proof proof f
 
+let equal_config = Context.equal_config
+
 let project x = x
 
 let absolute_key _ k = k
@@ -1145,18 +1208,23 @@ let record_non_consensus_operation_hash ctxt operation_hash =
 
 let non_consensus_operations ctxt = List.rev (non_consensus_operations_rev ctxt)
 
-let set_sampler_for_cycle ctxt cycle sampler_with_seed =
+let init_sampler_for_cycle ctxt cycle seed state =
   let map = sampler_state ctxt in
-  if Cycle_repr.Map.mem cycle map then Error `Sampler_already_set
+  if Cycle_repr.Map.mem cycle map then error (Sampler_already_set cycle)
   else
-    let map = Cycle_repr.Map.add cycle sampler_with_seed map in
-    Ok (update_sampler_state ctxt map)
+    let map = Cycle_repr.Map.add cycle (seed, state) map in
+    let ctxt = update_sampler_state ctxt map in
+    ok ctxt
 
-let sampler_for_cycle ctxt cycle =
+let sampler_for_cycle ~read ctxt cycle =
   let map = sampler_state ctxt in
   match Cycle_repr.Map.find cycle map with
-  | None -> Error `Sampler_not_set
-  | Some sampler -> Ok sampler
+  | Some (seed, state) -> return (ctxt, seed, state)
+  | None ->
+      read ctxt >>=? fun (seed, state) ->
+      let map = Cycle_repr.Map.add cycle (seed, state) map in
+      let ctxt = update_sampler_state ctxt map in
+      return (ctxt, seed, state)
 
 let stake_distribution_for_current_cycle ctxt =
   match ctxt.back.stake_distribution_for_current_cycle with
@@ -1172,6 +1240,13 @@ let init_stake_distribution_for_current_cycle ctxt
       stake_distribution_for_current_cycle =
         Some stake_distribution_for_current_cycle;
     }
+
+module Internal_for_tests = struct
+  let add_level ctxt l =
+    let new_level = Level_repr.Internal_for_tests.add_level ctxt.back.level l in
+    let new_back = {ctxt.back with level = new_level} in
+    {ctxt with back = new_back}
+end
 
 module type CONSENSUS = sig
   type t
@@ -1296,4 +1371,56 @@ module Consensus :
   let[@inline] set_grand_parent_branch ctxt branch =
     update_consensus_with ctxt (fun ctxt ->
         Raw_consensus.set_grand_parent_branch ctxt branch)
+end
+
+module Tx_rollup = struct
+  let add_message ctxt rollup message =
+    let root = ref Tx_rollup_inbox_repr.Merkle.(root empty) in
+    let updater element =
+      let tree =
+        Option.value element ~default:Tx_rollup_inbox_repr.Merkle.(empty)
+      in
+      let tree = Tx_rollup_inbox_repr.Merkle.add_message tree message in
+      root := Tx_rollup_inbox_repr.Merkle.root tree ;
+      Some tree
+    in
+    let map =
+      Tx_rollup_repr.Map.update
+        rollup
+        updater
+        ctxt.back.tx_rollup_current_messages
+    in
+    let back = {ctxt.back with tx_rollup_current_messages = map} in
+    ({ctxt with back}, !root)
+end
+
+(*
+   To optimize message insertion in smart contract rollup inboxes, we
+   maintain the sequence of current messages of each rollup used in
+   the block in a in-memory map.
+*)
+module Sc_rollup_in_memory_inbox = struct
+  let current_messages ctxt rollup =
+    let open Tzresult_syntax in
+    let+ (messages, ctxt) =
+      Sc_rollup_carbonated_map.find
+        ctxt
+        rollup
+        ctxt.back.sc_rollup_current_messages
+    in
+    match messages with
+    | None -> (Tree.empty ctxt, ctxt)
+    | Some tree -> (tree, ctxt)
+
+  let set_current_messages ctxt rollup tree =
+    let open Tzresult_syntax in
+    let+ (sc_rollup_current_messages, ctxt) =
+      Sc_rollup_carbonated_map.update
+        ctxt
+        rollup
+        (fun ctxt _prev_tree -> return (Some tree, ctxt))
+        ctxt.back.sc_rollup_current_messages
+    in
+    let back = {ctxt.back with sc_rollup_current_messages} in
+    {ctxt with back}
 end

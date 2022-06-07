@@ -62,7 +62,9 @@ val create :
   ?event_pipe:string ->
   ?rpc_host:string ->
   ?rpc_port:int ->
+  operator_pkh:string ->
   Node.t ->
+  Client.t ->
   t
 
 (** Get the name of an sc node. *)
@@ -79,6 +81,12 @@ val endpoint : t -> string
 
 (** Get the data-dir of an sc node. *)
 val data_dir : t -> string
+
+(** Get the base-dir of an sc node *)
+val base_dir : t -> string
+
+(** Get the public key hash of the sc node oeprator *)
+val operator_pkh : t -> string
 
 (** Wait until an sc node terminates and check its status.
 
@@ -126,3 +134,11 @@ end
     More precisely, wait until a [node_is_ready] event occurs.
     If such an event already occurred, return immediately. *)
 val wait_for_ready : t -> unit Lwt.t
+
+(** Wait until the layer 1 of the sc node is synchronized with some
+   given tezos level.
+
+    More precisely, wait until a [new_head] event with a large enough
+   level occurs.  If such an event already occurred, return
+   immediately. *)
+val wait_for_level : t -> int -> int Lwt.t

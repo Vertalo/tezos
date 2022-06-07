@@ -50,35 +50,37 @@ let rec reference_compare_comparable : type a. a comparable_ty -> a -> a -> int
     =
  fun ty x y ->
   match (ty, x, y) with
-  | (Unit_key, (), ()) -> 0
-  | (Never_key, _, _) -> .
-  | (Signature_key, x, y) -> normalize_compare @@ Script_signature.compare x y
-  | (String_key, x, y) -> normalize_compare @@ Script_string.compare x y
-  | (Bool_key, x, y) -> normalize_compare @@ Compare.Bool.compare x y
-  | (Mutez_key, x, y) -> normalize_compare @@ Tez.compare x y
-  | (Key_hash_key, x, y) ->
+  | (Unit_t, (), ()) -> 0
+  | (Never_t, _, _) -> .
+  | (Signature_t, x, y) -> normalize_compare @@ Script_signature.compare x y
+  | (String_t, x, y) -> normalize_compare @@ Script_string.compare x y
+  | (Bool_t, x, y) -> normalize_compare @@ Compare.Bool.compare x y
+  | (Mutez_t, x, y) -> normalize_compare @@ Tez.compare x y
+  | (Key_hash_t, x, y) ->
       normalize_compare @@ Signature.Public_key_hash.compare x y
-  | (Key_key, x, y) -> normalize_compare @@ Signature.Public_key.compare x y
-  | (Int_key, x, y) -> normalize_compare @@ Script_int.compare x y
-  | (Nat_key, x, y) -> normalize_compare @@ Script_int.compare x y
-  | (Timestamp_key, x, y) -> normalize_compare @@ Script_timestamp.compare x y
-  | (Address_key, x, y) ->
+  | (Key_t, x, y) -> normalize_compare @@ Signature.Public_key.compare x y
+  | (Int_t, x, y) -> normalize_compare @@ Script_int.compare x y
+  | (Nat_t, x, y) -> normalize_compare @@ Script_int.compare x y
+  | (Timestamp_t, x, y) -> normalize_compare @@ Script_timestamp.compare x y
+  | (Address_t, x, y) ->
       normalize_compare @@ Script_comparable.compare_address x y
-  | (Tx_rollup_l2_address_key, x, y) ->
+  | (Tx_rollup_l2_address_t, x, y) ->
       normalize_compare @@ Script_comparable.compare_tx_rollup_l2_address x y
-  | (Bytes_key, x, y) -> normalize_compare @@ Compare.Bytes.compare x y
-  | (Chain_id_key, x, y) -> normalize_compare @@ Script_chain_id.compare x y
-  | (Pair_key (tl, tr, _), (lx, rx), (ly, ry)) ->
+  | (Bytes_t, x, y) -> normalize_compare @@ Compare.Bytes.compare x y
+  | (Chain_id_t, x, y) -> normalize_compare @@ Script_chain_id.compare x y
+  | (Pair_t (tl, tr, _, YesYes), (lx, rx), (ly, ry)) ->
       let cl = reference_compare_comparable tl lx ly in
       if Compare.Int.(cl = 0) then reference_compare_comparable tr rx ry else cl
-  | (Union_key (tl, _, _), L x, L y) -> reference_compare_comparable tl x y
-  | (Union_key _, L _, R _) -> -1
-  | (Union_key _, R _, L _) -> 1
-  | (Union_key (_, tr, _), R x, R y) -> reference_compare_comparable tr x y
-  | (Option_key _, None, None) -> 0
-  | (Option_key _, None, Some _) -> -1
-  | (Option_key _, Some _, None) -> 1
-  | (Option_key (t, _), Some x, Some y) -> reference_compare_comparable t x y
+  | (Union_t (tl, _, _, YesYes), L x, L y) ->
+      reference_compare_comparable tl x y
+  | (Union_t _, L _, R _) -> -1
+  | (Union_t _, R _, L _) -> 1
+  | (Union_t (_, tr, _, YesYes), R x, R y) ->
+      reference_compare_comparable tr x y
+  | (Option_t _, None, None) -> 0
+  | (Option_t _, None, Some _) -> -1
+  | (Option_t _, Some _, None) -> 1
+  | (Option_t (t, _, Yes), Some x, Some y) -> reference_compare_comparable t x y
 
 (* Generation of one to three values of the same comparable type. *)
 
@@ -200,31 +202,22 @@ let assert_return x = assert_ok (Lwt_main.run x)
 
 let ctxt =
   assert_return
-    ( Context.init 3 >>=? fun (b, _cs) ->
+    ( Context.init3 () >>=? fun (b, _cs) ->
       Incremental.begin_construction b >>=? fun v ->
       return (Incremental.alpha_ctxt v) )
 
 let unparse_comparable_ty ty =
   Micheline.strip_locations
-    (fst
-       (assert_ok
-          Script_ir_translator.(
-            unparse_ty ~loc:() ctxt (ty_of_comparable_ty ty))))
+    (fst (assert_ok Script_ir_translator.(unparse_ty ~loc:() ctxt ty)))
 
 let unparse_comparable_data ty x =
   Micheline.strip_locations
-    (fst
-       (assert_return
-          Script_ir_translator.(
-            unparse_data ctxt Readable (ty_of_comparable_ty ty) x)))
+    (fst (assert_return Script_ir_translator.(unparse_data ctxt Readable ty x)))
 
 let pack_comparable_data ty x =
-  fst
-    (assert_return
-       Script_ir_translator.(pack_data ctxt (ty_of_comparable_ty ty) x))
+  fst (assert_return Script_ir_translator.(pack_data ctxt ty x))
 
 let unpack_comparable_data ty bytes =
-  let ty = Script_ir_translator.ty_of_comparable_ty ty in
   fst (assert_return (Script_interpreter_defs.unpack ctxt ~ty ~bytes))
 
 let pp_comparable_ty fmt ty =
@@ -349,7 +342,9 @@ let test_pack_unpack =
     comparable_data_arbitrary
     (fun (Ex_comparable_data (ty, x)) ->
       let oty =
-        match option_key (-1) ty with Ok ty -> ty | Error _ -> assert false
+        match comparable_option_t (-1) ty with
+        | Ok ty -> ty
+        | Error _ -> assert false
       in
       qcheck_eq
         ~cmp:(Script_comparable.compare_comparable oty)

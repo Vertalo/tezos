@@ -24,7 +24,7 @@
 (*****************************************************************************)
 
 (** Protocols we may want to test with. *)
-type t = Hangzhou | Ithaca | Alpha
+type t = Ithaca | Jakarta | Alpha
 
 (** Protocol parameters.
 
@@ -47,6 +47,9 @@ val name : t -> string
     for Ithaca after it was snapshotted. *)
 val number : t -> int
 
+(** Get the directory of a protocol (e.g. ["proto_012_Psithaca"]). *)
+val directory : t -> string
+
 (** Get the name of a protocol as a tag, for use when registering tests (e.g. ["edo"]). *)
 val tag : t -> string
 
@@ -55,6 +58,9 @@ val hash : t -> string
 
 (** Hash of protocol genesis *)
 val genesis_hash : string
+
+(** Hash of protocol demo_counter *)
+val demo_counter_hash : string
 
 (** Get the location of the parameter file.
 
@@ -195,13 +201,14 @@ val register_long_test :
 (** Register a regression test that uses the protocol.
 
     This is the same as [Regression.register], with the same differences
-    as [Protocol.register_test] compared to [Test.register]. *)
+    as [Protocol.register_test] compared to [Test.register], and where
+    [output_file] is parameterized by the protocol. *)
 val register_regression_test :
   __FILE__:string ->
   title:string ->
   tags:string list ->
   ?supports:supported_protocols ->
-  output_file:string ->
+  output_file:(t -> string) ->
   (t -> unit Lwt.t) ->
   t list ->
   unit

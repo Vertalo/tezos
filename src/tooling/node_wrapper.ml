@@ -1,111 +1,36 @@
-module Lib = struct
-  type version = string
-
-  type t = Hacl of version | Secp256k1 of version
-
-  let to_string = function Hacl _ -> "hacl" | Secp256k1 _ -> "secp256k1"
-
-  let to_js_lib = function
-    | Hacl _ -> "hacl-wasm"
-    | Secp256k1 _ -> "@nomadic-labs/secp256k1wasm"
-
-  let version = function Hacl v | Secp256k1 v -> v
-
-  let to_load_ident x = Printf.sprintf "load_%s" (to_string x)
-
-  let to_js x =
-    let load_ident = to_load_ident x in
-    let js_lib = to_js_lib x in
-    match x with
-    | Hacl _ ->
-        Printf.sprintf
-          {|
-function %s() {
+let code_for_lib = function
+  | "hacl-wasm" ->
+      {|
+(function () {
   /* We have to cheat to avoid the noise from hacl-wasm */
   var old_log = console.log;
   console.log = function () {};
-  var loader = require('%s');
+  var loader = require('hacl-wasm');
   console.log = old_log;
   return loader.getInitializedHaclModule().then(function(loaded){
     console.log('hacl loaded');
     global._HACL = loaded})
-}
+})
 |}
-          load_ident
-          js_lib
-    | Secp256k1 _ ->
-        Printf.sprintf
-          {|
-function %s() {
-  var loader = require('%s');
+  | "secp256k1-wasm" ->
+      {|
+(function () {
+  var loader = require('@nomadic-labs/secp256k1-wasm');
   return loader().then(function(loaded) {
     console.log('secp256k1 loaded');
     global._SECP256K1 = loaded})
-}
+})
 |}
-          load_ident
-          js_lib
-end
-
-let files = ref []
-
-let libs = ref []
-
-let args = ref []
-
-let () =
-  Arg.parse
-    [
-      ("--hacl", String (fun s -> libs := Lib.Hacl s :: !libs), "Load hacl-wasm");
-      ( "--secp256k1",
-        String (fun s -> libs := Lib.Secp256k1 s :: !libs),
-        "Load @nomadic-labs/secp256k1wasm" );
-      ( "--",
-        Rest_all (fun l -> args := List.rev_append l !args),
-        "args to pass to the scripts" );
-    ]
-    (fun a ->
-      match Filename.extension a with
-      | ".js" -> files := a :: !files
-      | _ -> args := a :: !args)
-    (Printf.sprintf
-       "%s [FLAGS] FILE.js -- args"
-       (Filename.basename Sys.executable_name))
-
-let setup () =
-  let package_json =
-    {|
-{
-  "private": true,
-  "type": "commonjs",
-  "description": "n/a",
-  "license": "n/a"
-}
+  | "ocaml-bls12-381" ->
+      {|
+(function () {
+  var loader = require('@dannywillems/ocaml-bls12-381');
+  return loader().then(function(loaded) {
+    console.log('bls12-381 loaded');
+    global._BLS12381 = loaded})
+})
 |}
-  in
-  let npmrc =
-    "@nomadic-labs:registry=https://gitlab.com/api/v4/packages/npm/"
-  in
-  let write_file name content =
-    let oc = open_out_bin name in
-    output_string oc content ;
-    close_out oc
-  in
-  write_file "package.json" package_json ;
-  write_file ".npmrc" npmrc
-
-let install x =
-  let cmd =
-    Printf.sprintf "npm install %s@%s" (Lib.to_js_lib x) (Lib.version x)
-  in
-  match Sys.command cmd with
-  | 0 -> ()
-  | _ ->
-      failwith
-        (Printf.sprintf
-           "unable to install %s (%s)"
-           (Lib.to_js_lib x)
-           (Lib.to_string x))
+  | _ -> raise Not_found
 
 let run i file args =
   let argv = "node" :: file :: args in
@@ -117,7 +42,7 @@ let run i file args =
     {|
 function run_%d () {
   console.log('Ready to run %s with argv = [ %s ]');
-  var old_argv = process.argv; 
+  var old_argv = process.argv;
   process.argv = [%s];
   require('%s');
   process.argv = old_argv;
@@ -129,8 +54,40 @@ function run_%d () {
     argv
     file
 
+let files = ref []
+
+let codes = ref []
+
+let args = ref []
+
 let () =
-  let libs = List.rev !libs in
+  let node_preload_var = "NODE_PRELOAD" in
+  let preload =
+    try String.split_on_char ',' (Unix.getenv node_preload_var)
+    with Not_found -> []
+  in
+  List.iter
+    (fun name ->
+      let code =
+        try code_for_lib name
+        with Not_found ->
+          failwith
+            (Printf.sprintf
+               "Unknown preloading library %S in %s"
+               name
+               node_preload_var)
+      in
+      codes := code :: !codes)
+    preload ;
+  List.iter
+    (fun x ->
+      match Filename.extension x with
+      | ".js" -> files := x :: !files
+      | _ -> args := x :: !args)
+    (List.tl (Array.to_list Sys.argv))
+
+let () =
+  let codes = List.rev !codes in
   let files = List.rev !files in
   let args = List.rev !args in
   let b = Buffer.create 1024 in
@@ -148,13 +105,15 @@ if(parseInt(major) < minimum_major){
     process.exit(1);
 }
 |} ;
-  List.iter (fun lib -> Buffer.add_string b (Lib.to_js lib)) libs ;
+  List.iteri
+    (fun i init ->
+      Buffer.add_string b (Printf.sprintf "var init_lib_%d = %s" i init))
+    codes ;
   List.iteri (fun i file -> Buffer.add_string b (run i file args)) files ;
-  let promises = List.map Lib.to_load_ident libs in
   Buffer.add_string b "Promise.resolve('Loading')" ;
-  List.iter
-    (fun p -> Buffer.add_string b (Printf.sprintf ".then(%s)" p))
-    promises ;
+  List.iteri
+    (fun i _ -> Buffer.add_string b (Printf.sprintf ".then(init_lib_%d)" i))
+    codes ;
   List.iteri
     (fun i _file -> Buffer.add_string b (Printf.sprintf ".then(run_%d)" i))
     files ;
@@ -162,11 +121,11 @@ if(parseInt(major) < minimum_major){
     b
     ".catch(function (e) { console.log(e); process.exit(1) })\n" ;
   print_newline () ;
-  (match libs with
-  | [] -> ()
-  | _ :: _ ->
-      setup () ;
-      List.iter install libs) ;
+  let () =
+    match Unix.getenv "ORIGINAL_PATH" with
+    | exception Not_found -> ()
+    | path -> Unix.putenv "PATH" path
+  in
   let oc = Unix.open_process_out "node" in
   Buffer.output_buffer oc b ;
   flush_all () ;

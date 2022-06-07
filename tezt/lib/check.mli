@@ -137,6 +137,20 @@ val tuple4 : 'a typ -> 'b typ -> 'c typ -> 'd typ -> ('a * 'b * 'c * 'd) typ
 val tuple5 :
   'a typ -> 'b typ -> 'c typ -> 'd typ -> 'e typ -> ('a * 'b * 'c * 'd * 'e) typ
 
+(** Make a 8-tuple type.
+
+    If all item types are comparable, the result is comparable in lexicographic order. *)
+val tuple8 :
+  'a1 typ ->
+  'a2 typ ->
+  'a3 typ ->
+  'a4 typ ->
+  'a5 typ ->
+  'a6 typ ->
+  'a7 typ ->
+  'a8 typ ->
+  ('a1 * 'a2 * 'a3 * 'a4 * 'a5 * 'a6 * 'a7 * 'a8) typ
+
 (** Make a type by encoding to another.
 
     Usage: [convert encode typ]
@@ -199,32 +213,32 @@ val comparable_module : (module COMPARABLE with type t = 'a) -> 'a typ
 (** Check that a value is equal to another.
 
     Example: [Check.((value = expected) int ~error_msg:"expected value = %R, got %L")] *)
-val ( = ) : 'a -> 'a -> 'a typ -> error_msg:string -> unit
+val ( = ) : 'a -> 'a -> ?__LOC__:string -> 'a typ -> error_msg:string -> unit
 
 (** Check that a value is not equal to another.
 
     Example: [Check.((value <> wrong) int ~error_msg:"expected value <> %R")] *)
-val ( <> ) : 'a -> 'a -> 'a typ -> error_msg:string -> unit
+val ( <> ) : 'a -> 'a -> ?__LOC__:string -> 'a typ -> error_msg:string -> unit
 
 (** Check that a value is less than another.
 
     Example: [Check.((value < threshold) int ~error_msg:"expected value < %R, got %L")] *)
-val ( < ) : 'a -> 'a -> 'a typ -> error_msg:string -> unit
+val ( < ) : 'a -> 'a -> ?__LOC__:string -> 'a typ -> error_msg:string -> unit
 
 (** Check that a value is less than or equal to another.
 
     Example: [Check.((value <= threshold) int ~error_msg:"expected value <= %R, got %L")] *)
-val ( <= ) : 'a -> 'a -> 'a typ -> error_msg:string -> unit
+val ( <= ) : 'a -> 'a -> ?__LOC__:string -> 'a typ -> error_msg:string -> unit
 
 (** Check that a value is greater than another.
 
     Example: [Check.((value > threshold) int ~error_msg:"expected value > %R, got %L")] *)
-val ( > ) : 'a -> 'a -> 'a typ -> error_msg:string -> unit
+val ( > ) : 'a -> 'a -> ?__LOC__:string -> 'a typ -> error_msg:string -> unit
 
 (** Check that a value is greater than or equal to another.
 
     Example: [Check.((value >= threshold) int ~error_msg:"expected value >= %R, got %L")] *)
-val ( >= ) : 'a -> 'a -> 'a typ -> error_msg:string -> unit
+val ( >= ) : 'a -> 'a -> ?__LOC__:string -> 'a typ -> error_msg:string -> unit
 
 (** Check that a string matches a regular expression.
 
@@ -240,14 +254,14 @@ val ( =~! ) : string -> rex -> error_msg:string -> unit
 
 (** Check that a value belongs to a list.
 
-    Example: [Check.list_mem ~__LOC__ int i list int ~error_msg:"expected %L to be in the
+    Example: [Check.list_mem int i list int ~error_msg:"expected %L to be in the
     list")] * *)
 val list_mem :
   'a typ -> ?__LOC__:string -> 'a -> 'a list -> error_msg:string -> unit
 
 (** Check that a value does not belong to a list.
 
-    Example: [Check.list_not_mem ~__LOC__ int i list int ~error_msg:"expected %L to not
+    Example: [Check.list_not_mem int i list int ~error_msg:"expected %L to not
     be in the list")] * *)
 val list_not_mem :
   'a typ -> ?__LOC__:string -> 'a -> 'a list -> error_msg:string -> unit

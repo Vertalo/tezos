@@ -57,18 +57,17 @@ module Protocol_constants_overrides = struct
     min_proposal_quorum : int32 option;
     liquidity_baking_subsidy : Tez.t option;
     liquidity_baking_sunset_level : int32 option;
-    liquidity_baking_escape_ema_threshold : int32 option;
+    liquidity_baking_toggle_ema_threshold : int32 option;
     max_operations_time_to_live : int option;
     minimal_block_delay : Period.t option;
     delay_increment_per_round : Period.t option;
-    minimal_participation_ratio : Constants.ratio option;
+    minimal_participation_ratio : Ratio.t option;
     consensus_committee_size : int option;
     consensus_threshold : int option;
     max_slashing_period : int option;
     frozen_deposits_percentage : int option;
     double_baking_punishment : Tez.t option;
-    ratio_of_frozen_deposits_slashed_per_double_endorsement :
-      Constants.ratio option;
+    ratio_of_frozen_deposits_slashed_per_double_endorsement : Ratio.t option;
     cache_script_size : int option;
     cache_stake_distribution_cycles : int option;
     cache_sampler_state_cycles : int option;
@@ -76,12 +75,25 @@ module Protocol_constants_overrides = struct
     tx_rollup_origination_size : int option;
     tx_rollup_hard_size_limit_per_inbox : int option;
     tx_rollup_hard_size_limit_per_message : int option;
+    tx_rollup_max_withdrawals_per_batch : int option;
     tx_rollup_commitment_bond : Tez.t option;
     tx_rollup_finality_period : int option;
-    tx_rollup_max_unfinalized_levels : int option;
+    tx_rollup_max_inboxes_count : int option;
     tx_rollup_withdraw_period : int option;
+    tx_rollup_max_messages_per_inbox : int option;
+    tx_rollup_max_commitments_count : int option;
+    tx_rollup_cost_per_byte_ema_factor : int option;
+    tx_rollup_max_ticket_payload_size : int option;
+    tx_rollup_rejection_max_proof_size : int option;
+    tx_rollup_sunset_level : int32 option;
     sc_rollup_enable : bool option;
     sc_rollup_origination_size : int option;
+    sc_rollup_challenge_window_in_blocks : int option;
+    sc_rollup_max_available_messages : int option;
+    sc_rollup_stake_amount_in_mutez : int option;
+    sc_rollup_commitment_frequency_in_blocks : int option;
+    sc_rollup_commitment_storage_size_in_bytes : int option;
+    sc_rollup_max_lookahead_in_blocks : int32 option;
     (* Additional, "bastard" parameters (they are not protocol constants but partially treated the same way). *)
     chain_id : Chain_id.t option;
     timestamp : Time.Protocol.t option;
@@ -114,7 +126,7 @@ module Protocol_constants_overrides = struct
                 c.min_proposal_quorum,
                 c.liquidity_baking_subsidy,
                 c.liquidity_baking_sunset_level,
-                c.liquidity_baking_escape_ema_threshold,
+                c.liquidity_baking_toggle_ema_threshold,
                 c.max_operations_time_to_live,
                 c.minimal_block_delay,
                 c.delay_increment_per_round,
@@ -131,16 +143,29 @@ module Protocol_constants_overrides = struct
                 ( ( c.cache_script_size,
                     c.cache_stake_distribution_cycles,
                     c.cache_sampler_state_cycles ),
-                  ( ( c.tx_rollup_enable,
-                      c.tx_rollup_origination_size,
-                      c.tx_rollup_hard_size_limit_per_inbox,
-                      c.tx_rollup_hard_size_limit_per_message,
-                      c.tx_rollup_commitment_bond,
-                      c.tx_rollup_finality_period,
-                      c.tx_rollup_max_unfinalized_levels,
-                      c.tx_rollup_withdraw_period ),
-                    (c.sc_rollup_enable, c.sc_rollup_origination_size) ) ) ) )
-          ) ))
+                  ( ( ( c.tx_rollup_enable,
+                        c.tx_rollup_origination_size,
+                        c.tx_rollup_hard_size_limit_per_inbox,
+                        c.tx_rollup_hard_size_limit_per_message,
+                        c.tx_rollup_max_withdrawals_per_batch,
+                        c.tx_rollup_commitment_bond,
+                        c.tx_rollup_finality_period,
+                        c.tx_rollup_max_inboxes_count,
+                        c.tx_rollup_withdraw_period,
+                        c.tx_rollup_max_messages_per_inbox ),
+                      ( c.tx_rollup_max_commitments_count,
+                        c.tx_rollup_cost_per_byte_ema_factor,
+                        c.tx_rollup_max_ticket_payload_size,
+                        c.tx_rollup_rejection_max_proof_size,
+                        c.tx_rollup_sunset_level ) ),
+                    ( c.sc_rollup_enable,
+                      c.sc_rollup_origination_size,
+                      c.sc_rollup_challenge_window_in_blocks,
+                      c.sc_rollup_max_available_messages,
+                      c.sc_rollup_stake_amount_in_mutez,
+                      c.sc_rollup_commitment_frequency_in_blocks,
+                      c.sc_rollup_commitment_storage_size_in_bytes,
+                      c.sc_rollup_max_lookahead_in_blocks ) ) ) ) ) ) ))
       (fun ( ( preserved_cycles,
                blocks_per_cycle,
                blocks_per_commitment,
@@ -162,7 +187,7 @@ module Protocol_constants_overrides = struct
                    min_proposal_quorum,
                    liquidity_baking_subsidy,
                    liquidity_baking_sunset_level,
-                   liquidity_baking_escape_ema_threshold,
+                   liquidity_baking_toggle_ema_threshold,
                    max_operations_time_to_live,
                    minimal_block_delay,
                    delay_increment_per_round,
@@ -179,16 +204,29 @@ module Protocol_constants_overrides = struct
                    ( ( cache_script_size,
                        cache_stake_distribution_cycles,
                        cache_sampler_state_cycles ),
-                     ( ( tx_rollup_enable,
-                         tx_rollup_origination_size,
-                         tx_rollup_hard_size_limit_per_inbox,
-                         tx_rollup_hard_size_limit_per_message,
-                         tx_rollup_commitment_bond,
-                         tx_rollup_finality_period,
-                         tx_rollup_max_unfinalized_levels,
-                         tx_rollup_withdraw_period ),
-                       (sc_rollup_enable, sc_rollup_origination_size) ) ) ) ) )
-           ) ->
+                     ( ( ( tx_rollup_enable,
+                           tx_rollup_origination_size,
+                           tx_rollup_hard_size_limit_per_inbox,
+                           tx_rollup_hard_size_limit_per_message,
+                           tx_rollup_max_withdrawals_per_batch,
+                           tx_rollup_commitment_bond,
+                           tx_rollup_finality_period,
+                           tx_rollup_max_inboxes_count,
+                           tx_rollup_withdraw_period,
+                           tx_rollup_max_messages_per_inbox ),
+                         ( tx_rollup_max_commitments_count,
+                           tx_rollup_cost_per_byte_ema_factor,
+                           tx_rollup_max_ticket_payload_size,
+                           tx_rollup_rejection_max_proof_size,
+                           tx_rollup_sunset_level ) ),
+                       ( sc_rollup_enable,
+                         sc_rollup_origination_size,
+                         sc_rollup_challenge_window_in_blocks,
+                         sc_rollup_max_available_messages,
+                         sc_rollup_stake_amount_in_mutez,
+                         sc_rollup_commitment_frequency_in_blocks,
+                         sc_rollup_commitment_storage_size_in_bytes,
+                         sc_rollup_max_lookahead_in_blocks ) ) ) ) ) ) ) ->
         {
           preserved_cycles;
           blocks_per_cycle;
@@ -211,7 +249,7 @@ module Protocol_constants_overrides = struct
           min_proposal_quorum;
           liquidity_baking_subsidy;
           liquidity_baking_sunset_level;
-          liquidity_baking_escape_ema_threshold;
+          liquidity_baking_toggle_ema_threshold;
           max_operations_time_to_live;
           minimal_block_delay;
           delay_increment_per_round;
@@ -229,12 +267,25 @@ module Protocol_constants_overrides = struct
           tx_rollup_origination_size;
           tx_rollup_hard_size_limit_per_inbox;
           tx_rollup_hard_size_limit_per_message;
+          tx_rollup_max_withdrawals_per_batch;
           tx_rollup_commitment_bond;
           tx_rollup_finality_period;
-          tx_rollup_max_unfinalized_levels;
+          tx_rollup_max_inboxes_count;
           tx_rollup_withdraw_period;
+          tx_rollup_max_messages_per_inbox;
+          tx_rollup_max_commitments_count;
+          tx_rollup_cost_per_byte_ema_factor;
+          tx_rollup_max_ticket_payload_size;
+          tx_rollup_rejection_max_proof_size;
+          tx_rollup_sunset_level;
           sc_rollup_enable;
           sc_rollup_origination_size;
+          sc_rollup_challenge_window_in_blocks;
+          sc_rollup_max_available_messages;
+          sc_rollup_stake_amount_in_mutez;
+          sc_rollup_commitment_frequency_in_blocks;
+          sc_rollup_commitment_storage_size_in_bytes;
+          sc_rollup_max_lookahead_in_blocks;
           chain_id;
           timestamp;
           initial_seed;
@@ -266,7 +317,7 @@ module Protocol_constants_overrides = struct
                   (opt "min_proposal_quorum" int32)
                   (opt "liquidity_baking_subsidy" Tez.encoding)
                   (opt "liquidity_baking_sunset_level" int32)
-                  (opt "liquidity_baking_escape_ema_threshold" int32)
+                  (opt "liquidity_baking_toggle_ema_threshold" int32)
                   (opt "max_operations_time_to_live" int16)
                   (opt "minimal_block_delay" Period.encoding)
                   (opt "delay_increment_per_round" Period.encoding)
@@ -274,15 +325,13 @@ module Protocol_constants_overrides = struct
                   (opt "consensus_threshold" int31))
                (merge_objs
                   (obj8
-                     (opt
-                        "minimal_participation_ratio"
-                        Constants.ratio_encoding)
+                     (opt "minimal_participation_ratio" Ratio.encoding)
                      (opt "max_slashing_period" int31)
                      (opt "frozen_deposits_percentage" int31)
                      (opt "double_baking_punishment" Tez.encoding)
                      (opt
                         "ratio_of_frozen_deposits_slashed_per_double_endorsement"
-                        Constants.ratio_encoding)
+                        Ratio.encoding)
                      (opt "chain_id" Chain_id.encoding)
                      (opt "initial_timestamp" Time.Protocol.encoding)
                      (opt "initial_seed" (option State_hash.encoding)))
@@ -292,18 +341,39 @@ module Protocol_constants_overrides = struct
                         (opt "cache_stake_distribution_cycles" int8)
                         (opt "cache_sampler_state_cycles" int8))
                      (merge_objs
+                        (merge_objs
+                           (obj10
+                              (opt "tx_rollup_enable" Data_encoding.bool)
+                              (opt "tx_rollup_origination_size" int31)
+                              (opt "tx_rollup_hard_size_limit_per_inbox" int31)
+                              (opt
+                                 "tx_rollup_hard_size_limit_per_message"
+                                 int31)
+                              (opt "tx_rollup_max_withdrawals_per_batch" int31)
+                              (opt "tx_rollup_commitment_bond" Tez.encoding)
+                              (opt "tx_rollup_finality_period" int31)
+                              (opt "tx_rollup_max_inboxes_count" int31)
+                              (opt "tx_rollup_withdraw_period" int31)
+                              (opt "tx_rollup_max_messages_per_inbox" int31))
+                           (obj5
+                              (opt "tx_rollup_max_commitments_count" int31)
+                              (opt "tx_rollup_cost_per_byte_ema_factor" int31)
+                              (opt "tx_rollup_max_ticket_payload_size" int31)
+                              (opt "tx_rollup_rejection_max_proof_size" int31)
+                              (opt "tx_rollup_sunset_level" int32)))
                         (obj8
-                           (opt "tx_rollup_enable" Data_encoding.bool)
-                           (opt "tx_rollup_origination_size" int31)
-                           (opt "tx_rollup_hard_size_limit_per_inbox" int31)
-                           (opt "tx_rollup_hard_size_limit_per_message" int31)
-                           (opt "tx_rollup_commitment_bond" Tez.encoding)
-                           (opt "tx_rollup_finality_period" int31)
-                           (opt "tx_rollup_max_unfinalized_levels" int31)
-                           (opt "tx_rollup_withdraw_period" int31))
-                        (obj2
                            (opt "sc_rollup_enable" bool)
-                           (opt "sc_rollup_origination_size" int31))))))))
+                           (opt "sc_rollup_origination_size" int31)
+                           (opt "sc_rollup_challenge_window_in_blocks" int31)
+                           (opt "sc_rollup_max_available_messages" int31)
+                           (opt "sc_rollup_stake_amount_in_mutez" int31)
+                           (opt
+                              "sc_rollup_commitment_frequency_in_blocks"
+                              int31)
+                           (opt
+                              "sc_rollup_commitment_storage_size_in_bytes"
+                              int31)
+                           (opt "sc_rollup_max_lookahead_in_blocks" int32))))))))
 
   let default_value (cctxt : Tezos_client_base.Client_context.full) :
       t tzresult Lwt.t =
@@ -345,8 +415,8 @@ module Protocol_constants_overrides = struct
         liquidity_baking_subsidy = Some parametric.liquidity_baking_subsidy;
         liquidity_baking_sunset_level =
           Some parametric.liquidity_baking_sunset_level;
-        liquidity_baking_escape_ema_threshold =
-          Some parametric.liquidity_baking_escape_ema_threshold;
+        liquidity_baking_toggle_ema_threshold =
+          Some parametric.liquidity_baking_toggle_ema_threshold;
         max_operations_time_to_live =
           Some parametric.max_operations_time_to_live;
         minimal_block_delay = Some parametric.minimal_block_delay;
@@ -372,13 +442,38 @@ module Protocol_constants_overrides = struct
           Some parametric.tx_rollup_hard_size_limit_per_inbox;
         tx_rollup_hard_size_limit_per_message =
           Some parametric.tx_rollup_hard_size_limit_per_message;
+        tx_rollup_max_withdrawals_per_batch =
+          Some parametric.tx_rollup_max_withdrawals_per_batch;
         tx_rollup_commitment_bond = Some parametric.tx_rollup_commitment_bond;
         tx_rollup_finality_period = Some parametric.tx_rollup_finality_period;
-        tx_rollup_max_unfinalized_levels =
-          Some parametric.tx_rollup_max_unfinalized_levels;
+        tx_rollup_max_inboxes_count =
+          Some parametric.tx_rollup_max_inboxes_count;
         tx_rollup_withdraw_period = Some parametric.tx_rollup_withdraw_period;
+        tx_rollup_max_messages_per_inbox =
+          Some parametric.tx_rollup_max_messages_per_inbox;
+        tx_rollup_max_commitments_count =
+          Some parametric.tx_rollup_max_commitments_count;
+        tx_rollup_cost_per_byte_ema_factor =
+          Some parametric.tx_rollup_cost_per_byte_ema_factor;
+        tx_rollup_max_ticket_payload_size =
+          Some parametric.tx_rollup_max_ticket_payload_size;
+        tx_rollup_rejection_max_proof_size =
+          Some parametric.tx_rollup_rejection_max_proof_size;
+        tx_rollup_sunset_level = Some parametric.tx_rollup_sunset_level;
         sc_rollup_enable = Some parametric.sc_rollup_enable;
         sc_rollup_origination_size = Some parametric.sc_rollup_origination_size;
+        sc_rollup_challenge_window_in_blocks =
+          Some parametric.sc_rollup_challenge_window_in_blocks;
+        sc_rollup_max_available_messages =
+          Some parametric.sc_rollup_max_available_messages;
+        sc_rollup_stake_amount_in_mutez =
+          Some parametric.sc_rollup_stake_amount_in_mutez;
+        sc_rollup_commitment_frequency_in_blocks =
+          Some parametric.sc_rollup_commitment_frequency_in_blocks;
+        sc_rollup_commitment_storage_size_in_bytes =
+          Some parametric.sc_rollup_commitment_storage_size_in_bytes;
+        sc_rollup_max_lookahead_in_blocks =
+          Some parametric.sc_rollup_max_lookahead_in_blocks;
         (* Bastard additional parameters. *)
         chain_id = to_chain_id_opt cpctxt#chain;
         timestamp = Some header.timestamp;
@@ -408,7 +503,7 @@ module Protocol_constants_overrides = struct
       min_proposal_quorum = None;
       liquidity_baking_subsidy = None;
       liquidity_baking_sunset_level = None;
-      liquidity_baking_escape_ema_threshold = None;
+      liquidity_baking_toggle_ema_threshold = None;
       max_operations_time_to_live = None;
       minimal_block_delay = None;
       delay_increment_per_round = None;
@@ -428,12 +523,25 @@ module Protocol_constants_overrides = struct
       tx_rollup_origination_size = None;
       tx_rollup_hard_size_limit_per_inbox = None;
       tx_rollup_hard_size_limit_per_message = None;
+      tx_rollup_max_withdrawals_per_batch = None;
       tx_rollup_commitment_bond = None;
       tx_rollup_finality_period = None;
-      tx_rollup_max_unfinalized_levels = None;
+      tx_rollup_max_inboxes_count = None;
       tx_rollup_withdraw_period = None;
+      tx_rollup_max_messages_per_inbox = None;
+      tx_rollup_max_commitments_count = None;
+      tx_rollup_cost_per_byte_ema_factor = None;
+      tx_rollup_max_ticket_payload_size = None;
+      tx_rollup_rejection_max_proof_size = None;
+      tx_rollup_sunset_level = None;
       sc_rollup_enable = None;
       sc_rollup_origination_size = None;
+      sc_rollup_challenge_window_in_blocks = None;
+      sc_rollup_max_available_messages = None;
+      sc_rollup_stake_amount_in_mutez = None;
+      sc_rollup_commitment_frequency_in_blocks = None;
+      sc_rollup_commitment_storage_size_in_bytes = None;
+      sc_rollup_max_lookahead_in_blocks = None;
       chain_id = None;
       timestamp = None;
       initial_seed = None;
@@ -454,7 +562,7 @@ module Protocol_constants_overrides = struct
     | Some value -> Format.fprintf ppf "@[<h>%s: %a@]" name pp value
 
   let apply_overrides (cctxt : Tezos_client_base.Client_context.printer) (o : t)
-      (c : Constants.parametric) : Constants.parametric tzresult Lwt.t =
+      (c : Constants.Parametric.t) : Constants.Parametric.t tzresult Lwt.t =
     let open Format in
     let pp_print_int32 ppf i = fprintf ppf "%li" i in
     let pp_print_int64 ppf i = fprintf ppf "%Li" i in
@@ -588,8 +696,8 @@ module Protocol_constants_overrides = struct
           };
         O
           {
-            name = "liquidity_baking_escape_ema_threshold";
-            override_value = o.liquidity_baking_escape_ema_threshold;
+            name = "liquidity_baking_toggle_ema_threshold";
+            override_value = o.liquidity_baking_toggle_ema_threshold;
             pp = pp_print_int32;
           };
         O
@@ -608,7 +716,7 @@ module Protocol_constants_overrides = struct
           {
             name = "minimal_participation_ratio";
             override_value = o.minimal_participation_ratio;
-            pp = Constants.pp_ratio;
+            pp = Ratio.pp;
           };
         O
           {
@@ -645,7 +753,7 @@ module Protocol_constants_overrides = struct
             name = "ratio_of_frozen_deposits_slashed_per_double_endorsement";
             override_value =
               o.ratio_of_frozen_deposits_slashed_per_double_endorsement;
-            pp = Constants.pp_ratio;
+            pp = Ratio.pp;
           };
         O
           {
@@ -657,6 +765,12 @@ module Protocol_constants_overrides = struct
           {
             name = "sc_rollup_origination_size";
             override_value = o.sc_rollup_origination_size;
+            pp = pp_print_int;
+          };
+        O
+          {
+            name = "sc_rollup_challenge_window_in_blocks";
+            override_value = o.sc_rollup_challenge_window_in_blocks;
             pp = pp_print_int;
           };
         O {name = "chain_id"; override_value = o.chain_id; pp = Chain_id.pp};
@@ -695,6 +809,24 @@ module Protocol_constants_overrides = struct
             name = "tx_rollup_commitment_bond";
             override_value = o.tx_rollup_commitment_bond;
             pp = Tez.pp;
+          };
+        O
+          {
+            name = "tx_rollup_cost_per_byte_ema_factor";
+            override_value = o.tx_rollup_cost_per_byte_ema_factor;
+            pp = pp_print_int;
+          };
+        O
+          {
+            name = "tx_rollup_rejection_max_proof_size";
+            override_value = o.tx_rollup_rejection_max_proof_size;
+            pp = pp_print_int;
+          };
+        O
+          {
+            name = "tx_rollup_sunset_level";
+            override_value = o.tx_rollup_sunset_level;
+            pp = pp_print_int32;
           };
       ]
     in
@@ -788,10 +920,10 @@ module Protocol_constants_overrides = struct
            Option.value
              ~default:c.liquidity_baking_sunset_level
              o.liquidity_baking_sunset_level;
-         liquidity_baking_escape_ema_threshold =
+         liquidity_baking_toggle_ema_threshold =
            Option.value
-             ~default:c.liquidity_baking_escape_ema_threshold
-             o.liquidity_baking_escape_ema_threshold;
+             ~default:c.liquidity_baking_toggle_ema_threshold
+             o.liquidity_baking_toggle_ema_threshold;
          max_operations_time_to_live =
            Option.value
              ~default:c.max_operations_time_to_live
@@ -840,6 +972,10 @@ module Protocol_constants_overrides = struct
            Option.value
              ~default:c.tx_rollup_hard_size_limit_per_message
              o.tx_rollup_hard_size_limit_per_message;
+         tx_rollup_max_withdrawals_per_batch =
+           Option.value
+             ~default:c.tx_rollup_max_withdrawals_per_batch
+             o.tx_rollup_max_withdrawals_per_batch;
          tx_rollup_commitment_bond =
            Option.value
              ~default:c.tx_rollup_commitment_bond
@@ -848,22 +984,70 @@ module Protocol_constants_overrides = struct
            Option.value
              ~default:c.tx_rollup_finality_period
              o.tx_rollup_finality_period;
-         tx_rollup_max_unfinalized_levels =
+         tx_rollup_max_inboxes_count =
            Option.value
-             ~default:c.tx_rollup_max_unfinalized_levels
-             o.tx_rollup_max_unfinalized_levels;
+             ~default:c.tx_rollup_max_inboxes_count
+             o.tx_rollup_max_inboxes_count;
          tx_rollup_withdraw_period =
            Option.value
              ~default:c.tx_rollup_withdraw_period
              o.tx_rollup_withdraw_period;
+         tx_rollup_max_messages_per_inbox =
+           Option.value
+             ~default:c.tx_rollup_max_messages_per_inbox
+             o.tx_rollup_max_messages_per_inbox;
+         tx_rollup_max_commitments_count =
+           Option.value
+             ~default:c.tx_rollup_max_commitments_count
+             o.tx_rollup_max_commitments_count;
+         tx_rollup_cost_per_byte_ema_factor =
+           Option.value
+             ~default:c.tx_rollup_cost_per_byte_ema_factor
+             o.tx_rollup_cost_per_byte_ema_factor;
+         tx_rollup_max_ticket_payload_size =
+           Option.value
+             ~default:c.tx_rollup_max_ticket_payload_size
+             o.tx_rollup_max_ticket_payload_size;
+         tx_rollup_rejection_max_proof_size =
+           Option.value
+             ~default:c.tx_rollup_rejection_max_proof_size
+             o.tx_rollup_rejection_max_proof_size;
+         tx_rollup_sunset_level =
+           Option.value
+             ~default:c.tx_rollup_sunset_level
+             o.tx_rollup_sunset_level;
          sc_rollup_enable =
            Option.value ~default:c.sc_rollup_enable o.sc_rollup_enable;
          sc_rollup_origination_size =
            Option.value
              ~default:c.sc_rollup_origination_size
              o.sc_rollup_origination_size;
+         sc_rollup_challenge_window_in_blocks =
+           Option.value
+             ~default:c.sc_rollup_challenge_window_in_blocks
+             o.sc_rollup_challenge_window_in_blocks;
+         sc_rollup_max_available_messages =
+           Option.value
+             ~default:c.sc_rollup_max_available_messages
+             o.sc_rollup_max_available_messages;
+         sc_rollup_stake_amount_in_mutez =
+           Option.value
+             ~default:c.sc_rollup_stake_amount_in_mutez
+             o.sc_rollup_stake_amount_in_mutez;
+         sc_rollup_commitment_frequency_in_blocks =
+           Option.value
+             ~default:c.sc_rollup_commitment_frequency_in_blocks
+             o.sc_rollup_commitment_frequency_in_blocks;
+         sc_rollup_commitment_storage_size_in_bytes =
+           Option.value
+             ~default:c.sc_rollup_commitment_storage_size_in_bytes
+             o.sc_rollup_commitment_storage_size_in_bytes;
+         sc_rollup_max_lookahead_in_blocks =
+           Option.value
+             ~default:c.sc_rollup_max_lookahead_in_blocks
+             o.sc_rollup_max_lookahead_in_blocks;
        }
-        : Constants.parametric)
+        : Constants.Parametric.t)
 end
 
 module Parsed_account = struct
@@ -976,7 +1160,7 @@ module Protocol_parameters = struct
     initial_timestamp : Time.Protocol.t;
     bootstrap_accounts : Parameters.bootstrap_account list;
     bootstrap_contracts : Parameters.bootstrap_contract list;
-    constants : Constants.parametric;
+    constants : Constants.Parametric.t;
   }
 
   let encoding : t Data_encoding.t =
@@ -996,7 +1180,7 @@ module Protocol_parameters = struct
          (req "initial_timestamp" Time.Protocol.encoding)
          (req "bootstrap_accounts" (list Bootstrap_account.encoding))
          (req "bootstrap_contracts" (list Bootstrap_contract.encoding))
-         (req "constants" Constants.parametric_encoding))
+         (req "constants" Constants.Parametric.encoding))
 
   let default_value : t =
     let parameters =
@@ -1258,8 +1442,8 @@ let mem_init :
         payload_hash;
         seed_nonce_hash = None;
         proof_of_work_nonce;
-        (* following Baking_configuration.escape_votes in lib_delegate *)
-        liquidity_baking_escape_vote = false;
+        (* following Baking_configuration.toggle_votes in lib_delegate *)
+        liquidity_baking_toggle_vote = Liquidity_baking.LB_pass;
       }
     in
     let unsigned_bytes =

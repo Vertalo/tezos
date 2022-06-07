@@ -210,10 +210,9 @@ which is done by performing the following three steps:
 If so wished, these three steps can be performed by the script
 ``scripts/snapshot_alpha.sh``, which receives a parameter with the name of the
 Alpha protocol. This name parameter follows the convention
-``<tag_starting_with_version_letter>_<version_number>``. For historical reasons
-version ``004`` corresponds to letter ``a``. A valid name for the Alpha protocol
-in our example would be ``d_012``, since version ``012`` corresponds to letter
-``d``. We can snapshot the protocol by invoking the following::
+``<tag_starting_with_version_letter>_<version_number>``. A valid name for the Alpha protocol
+in our example could be ``d_012`` (we might also have used ``dummy_12``).
+We can snapshot the protocol by invoking the following::
 
   $ ./scripts/snapshot_alpha.sh d_012
 
@@ -252,7 +251,7 @@ to pass it to ``link_protocol.sh``. Finally, this script also updates ``.gitlab-
 to add unit tests, integration tests and opam tests for the new protocol.
 To run it, pass the protocol version number and name as follows::
 
-  $ ./scripts/snapshot_alpha_and_link.sh 012 ithaca
+  $ ./scripts/snapshot_alpha_and_link.sh 012 d
 
 
 3. Set User-Activated Upgrade
@@ -335,19 +334,10 @@ fake signatures. This can be achieved with a small patch to
 ``src/lib_crypto/signature.ml`` that replaces each signature with a
 concatenation of a public key and a message, such that this fake signature is
 still unique for each key and message. This patch is encoded as the git diff
-contained in the file ``scripts/yes-node.patch``. We can apply such patch by
+contained in the file ``scripts/yes-node.patch``. We can apply this patch by
 invoking::
 
-  $ patch -p1 < scripts/yes-node.patch
-
-If the patch was already applied, for instance if we run the command above twice
-by mistake, then we should answer with the default ``n`` option to the two
-messages that the ``patch`` tool displays, or otherwise the patch would fail or
-we would revert it::
-
-  Reversed (or previously applied) patch detected!  Assume -R? [n] n
-  Apply anyway? [n] n
-
+  $ ./scripts/patch-yes_node.sh
 
 5. Compile the Project
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -413,14 +403,27 @@ system's temp directory (in our example, ``/tmp``) as given by the path argument
 ``/tmp/yes-wallet``. If no path argument was given, the command would create the
 yes-wallet folder in the default path ``./yes-wallet``.
 
+The command above will generate a wallet containing approximately 400
+keys. If you wish to restrict to a given percentage of the endorsing
+power by retrieving the first bakers (with the biggest staking
+power), you can also use the ``--staking-share`` option to provide a
+limit. For instance, the first largest bakers with an accumulated
+stake of at least 75 percent can be kept with::
+
+  $ dune exec scripts/yes-wallet/yes_wallet.exe -- create from context /tmp/tezos-node-mainnet in /tmp/yes-wallet --active-bakers-only --staking-share 75
+
 .. note::
-   Prior to switching to the Tenderbake consensus algorithm it was sufficient to
-   create a minimal yes-wallet with 8 Foundation keys. Starting from Protocol I
-   this is no longer the case, because a number of bakers holding at least 2/3rds of the total endorsing power have to endorse a block
-   for it to be considered valid. That's why the wallet needs as many keys as it
-   can get.
+   Prior to switching to the Tenderbake consensus algorithm it was
+   sufficient to create a minimal yes-wallet with 8 Foundation
+   keys. Starting from Protocol I this is no longer the case, because
+   a number of bakers holding at least 2/3rds of the total endorsing
+   power have to endorse a block for it to be considered valid.
 
-
+By restricting the accumulated stake to 75% as in the command above,
+the wallet is both "lighter" (it may contain around 30-40 keys and
+therefore some commands like ``tezos-client bake for`` will execute
+faster) and its keys will represent more than the 2/3rds of the
+endorsing power for any given level.
 
 Batch Steps 1--7 Above
 ~~~~~~~~~~~~~~~~~~~~~~

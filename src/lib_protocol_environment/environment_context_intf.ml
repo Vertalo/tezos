@@ -44,6 +44,11 @@ module type PROOF = sig
   include Tezos_context_sigs.Context.PROOF
 end
 
+module type PROOF_ENCODING = sig
+  (** @inline *)
+  include Tezos_context_sigs.Context.PROOF_ENCODING
+end
+
 module type HASH_VERSION = sig
   (** @inline *)
   include Tezos_context_sigs.Context.HASH_VERSION
@@ -252,6 +257,10 @@ end
 module V5 = struct
   type depth = V4.depth
 
+  type config = Tezos_context_sigs.Config.t
+
+  let equal_config = Tezos_context_sigs.Config.equal
+
   module type VIEW = VIEW
 
   module Kind = Kind
@@ -259,6 +268,8 @@ module V5 = struct
   module type TREE = TREE
 
   module type S = sig
+    val equal_config : config -> config -> bool
+
     include VIEW with type key = string list and type value = bytes
 
     module Tree : sig
@@ -283,7 +294,12 @@ module V5 = struct
     type ('proof, 'result) verifier :=
       'proof ->
       (tree -> (tree * 'result) Lwt.t) ->
-      (tree * 'result, [`Msg of string]) result Lwt.t
+      ( tree * 'result,
+        [ `Proof_mismatch of string
+        | `Stream_too_long of string
+        | `Stream_too_short of string ] )
+      result
+      Lwt.t
 
     val verify_tree_proof : (tree_proof, 'a) verifier
 

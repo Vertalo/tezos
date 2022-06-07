@@ -226,11 +226,12 @@ let check_listings_not_empty client =
       Test.fail "Expected GET .../votes/listing RPC to return a non-empty list"
   | _ :: _ -> unit
 
-type target_protocol = Known of Protocol.t | Injected_test
+type target_protocol = Known of Protocol.t | Injected_test | Demo
 
 let target_protocol_tag = function
   | Known protocol -> Protocol.tag protocol
   | Injected_test -> "injected_test"
+  | Demo -> "demo_counter"
 
 let inject_test_protocol client =
   let protocol_path = Temp.dir "test_proto" in
@@ -278,7 +279,7 @@ let test_voting ~from_protocol ~(to_protocol : target_protocol) ~loser_protocols
        :: List.map (fun p -> "loser_" ^ Protocol.tag p) loser_protocols
       @ [
           (match to_protocol with
-          | Known _ -> "known"
+          | Known _ | Demo -> "known"
           | Injected_test -> "injected");
         ])
   @@ fun () ->
@@ -293,23 +294,22 @@ let test_voting ~from_protocol ~(to_protocol : target_protocol) ~loser_protocols
      of blocks for all protocols, and we do not need to handle
      different cases when checking levels and periods in tests. *)
   let parameters =
-    match from_protocol with
-    | Alpha ->
-        [
-          (["blocks_per_cycle"], Some "4");
-          (["cycles_per_voting_period"], Some "1");
-        ]
-    | _ ->
-        (* Note: the test fails with [blocks_per_voting_period] < [blocks_per_cycle]
-           when migrating to protocol Alpha, as this will cause the migration to
-           set [cycles_per_voting_period] = 0. The test also fails when
-           [blocks_per_voting_period] % [blocks_per_cycle] <> 0, as the starting
-           position of a period will change when migrating a protocol to Alpha.
-        *)
-        [
-          (["blocks_per_cycle"], Some "4");
-          (["blocks_per_voting_period"], Some "4");
-        ]
+    if Protocol.number from_protocol >= 013 then
+      [
+        (["blocks_per_cycle"], Some "4");
+        (["cycles_per_voting_period"], Some "1");
+      ]
+    else
+      (* Note: the test fails with [blocks_per_voting_period] < [blocks_per_cycle]
+         when migrating to protocol Alpha, as this will cause the migration to
+         set [cycles_per_voting_period] = 0. The test also fails when
+         [blocks_per_voting_period] % [blocks_per_cycle] <> 0, as the starting
+         position of a period will change when migrating a protocol to Alpha.
+      *)
+      [
+        (["blocks_per_cycle"], Some "4");
+        (["blocks_per_voting_period"], Some "4");
+      ]
   in
   let* parameter_file =
     Protocol.write_parameter_file ~base:(Right (from_protocol, None)) parameters
@@ -403,6 +403,7 @@ let test_voting ~from_protocol ~(to_protocol : target_protocol) ~loser_protocols
     match to_protocol with
     | Known protocol -> return (Protocol.hash protocol)
     | Injected_test -> inject_test_protocol client
+    | Demo -> return Protocol.demo_counter_hash
   in
   (* Submit proposals: [to_protocol] and [loser_protocols]. *)
   let* () =
@@ -822,7 +823,8 @@ let test_voting ~from_protocol ~(to_protocol : target_protocol) ~loser_protocols
       (* Bake the transition. *)
       Log.info "Baking transition block..." ;
       let everybody =
-        List.map (fun x -> x.Account.public_key_hash) Constant.bootstrap_keys
+        Array.map (fun x -> x.Account.public_key_hash) Account.Bootstrap.keys
+        |> Array.to_list
       in
       let* () = Client.bake_for ~keys:everybody client in
       let* () =
@@ -853,6 +855,16 @@ let test_voting ~from_protocol ~(to_protocol : target_protocol) ~loser_protocols
             remaining = 2;
           }
       in
+      check_protocols client (to_protocol_hash, to_protocol_hash)
+  | Demo ->
+      let* () =
+        check_protocols client (Protocol.hash from_protocol, to_protocol_hash)
+      in
+      Log.info
+        "Current period: adoption, with next protocol: %s."
+        (target_protocol_tag to_protocol) ;
+      Log.info "Baking transition block..." ;
+      let* () = Demo_client.bake client in
       check_protocols client (to_protocol_hash, to_protocol_hash)
 
 let test_user_activated_protocol_override_baker_vote ~from_protocol ~to_protocol
@@ -1156,20 +1168,9 @@ let test_user_activated_protocol_override_baker_vote ~from_protocol ~to_protocol
        default delay between blocks, to give us larger
        margins. Therefore, we activate the protocol at the current
        timestamp. *)
-    let timestamp_now =
-      let tm = Unix.gmtime (Unix.time ()) in
-      Printf.sprintf
-        "%04d-%02d-%02dT%02d:%02d:%02dZ"
-        (tm.tm_year + 1900)
-        (tm.tm_mon + 1)
-        tm.tm_mday
-        tm.tm_hour
-        tm.tm_min
-        tm.tm_sec
-    in
     Client.activate_protocol
       ~protocol:from_protocol
-      ~timestamp:timestamp_now
+      ~timestamp:Now
       ~parameter_file
       client
   in
@@ -1350,4 +1351,4 @@ let register ~from_protocol ~(to_protocol : target_protocol) ~loser_protocols =
       test_user_activated_protocol_override_baker_vote
         ~from_protocol
         ~to_protocol
-  | Injected_test -> ()
+  | Demo | Injected_test -> ()

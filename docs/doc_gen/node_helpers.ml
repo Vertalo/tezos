@@ -35,6 +35,7 @@ let genesis : Genesis.t =
   }
 
 let with_node f =
+  let open Lwt_result_syntax in
   let run dir =
     let ( / ) = Filename.concat in
     let node_config : Node.config =
@@ -45,6 +46,7 @@ let with_node f =
           Distributed_db_version.Name.of_string "SANDBOXED_TEZOS_DOCGEN";
         user_activated_upgrades = [];
         user_activated_protocol_overrides = [];
+        operation_metadata_size_limit = None;
         patch_context = None;
         data_dir = dir;
         store_root = dir / "store";
@@ -56,18 +58,20 @@ let with_node f =
         enable_testchain = false;
       }
     in
-    Node.create
-      ~singleprocess:true
-      node_config
-      Node.default_peer_validator_limits
-      Node.default_block_validator_limits
-      Node.default_prevalidator_limits
-      Node.default_chain_validator_limits
-      None
-    >>=? fun node ->
-    f node >>=? fun () -> return ()
+    let* node =
+      Node.create
+        ~singleprocess:true
+        node_config
+        Node.default_peer_validator_limits
+        Node.default_block_validator_limits
+        Node.default_prevalidator_limits
+        Node.default_chain_validator_limits
+        None
+    in
+    f node
   in
-  Lwt_utils_unix.with_tempdir "tezos_rpcdoc_" run >>= function
+  let*! r = Lwt_utils_unix.with_tempdir "tezos_rpcdoc_" run in
+  match r with
   | Ok () -> Lwt.return_unit
   | Error err ->
       Format.eprintf "%a@." pp_print_trace err ;

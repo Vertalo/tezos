@@ -34,12 +34,6 @@ let bot = Bot_t
 
 let unit = unit_t
 
-let unit_cmp = unit_key
-
-let int_cmp = int_key
-
-let string_cmp = string_key
-
 (* the type of integers *)
 let int = int_t
 
@@ -96,9 +90,17 @@ let set k = match set_t (-1) k with Error _ -> assert false | Ok t -> t
 let pair k1 k2 =
   match pair_t (-1) k1 k2 with Error _ -> assert false | Ok t -> t
 
+(* comparable pair type constructor *)
+let cpair k1 k2 =
+  match comparable_pair_t (-1) k1 k2 with Error _ -> assert false | Ok t -> t
+
 (* union type constructor*)
 let union k1 k2 =
   match union_t (-1) k1 k2 with Error _ -> assert false | Ok t -> t
+
+(* comparable union type constructor *)
+let cunion k1 k2 =
+  match comparable_union_t (-1) k1 k2 with Error _ -> assert false | Ok t -> t
 
 let lambda x y =
   match lambda_t (-1) x y with Error _ -> assert false | Ok t -> t
@@ -111,6 +113,9 @@ let operation = operation_t
 let sapling_state memo_size = sapling_state_t ~memo_size
 
 let sapling_transaction memo_size = sapling_transaction_t ~memo_size
+
+let sapling_transaction_deprecated memo_size =
+  sapling_transaction_deprecated_t ~memo_size
 
 let bls12_381_g1 = bls12_381_g1_t
 

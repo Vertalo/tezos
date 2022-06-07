@@ -70,6 +70,8 @@ module M = struct
     let length _ _ = assert false
 
     let fold ?depth:_ _ _ ~order:_ ~init:_ ~f:_ = assert false
+
+    let config _ = assert false
   end
 
   include Tree
@@ -88,6 +90,10 @@ module M = struct
   let verify_tree_proof _ _ = assert false
 
   let verify_stream_proof _ _ = assert false
+
+  let equal_config _ _ = assert false
+
+  let config _ = assert false
 end
 
 open Tezos_protocol_environment

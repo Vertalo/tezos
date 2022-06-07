@@ -29,7 +29,7 @@ the specification. The document also starts with a less formal
 explanation of the context: how Michelson code interacts with the
 blockchain.
 
-.. _address_prefixes:
+.. _address_prefixes_alpha:
 
 Semantics of smart contracts and transactions
 ---------------------------------------------
@@ -50,7 +50,8 @@ From Michelson, they are indistinguishable. A safe way to think about
 this is to consider that implicit accounts are smart contracts that
 always succeed to receive tokens, and does nothing else.
 
-Another kind of addresses, prefixed by ``tru1`` and ``tru2``, are related to :doc:`transaction rollups <./transaction_rollups>`.
+Another kind of addresses, prefixed by ``txr1`` and ``tz4``, are
+related to :doc:`transaction rollups <./transaction_rollups>`.
 
 Intra-transaction semantics
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -2249,11 +2250,11 @@ comprehensive description of the Sapling protocol.
 
 ::
 
-    :: sapling_transaction ms : sapling_state ms : 'S   ->   option (pair int (sapling_state ms)): 'S
+    :: sapling_transaction ms : sapling_state ms : 'S   ->   option (pair bytes (pair int (sapling_state ms))): 'S
 
-    > SAPLING_VERIFY_UPDATE / t : s : S  =>  Some (Pair b s') : S
+    > SAPLING_VERIFY_UPDATE / t : s : S  =>  Some (Pair bound_data (Pair balance s')) : S
         iff the transaction t successfully applied on state s resulting
-        in balance b and an updated state s'
+        in the bound_data and the balance of the transaction and an updated state s'
     > SAPLING_VERIFY_UPDATE / t : s : S  =>  None : S
         iff the transaction t is invalid with respect to the state
 
@@ -2266,7 +2267,6 @@ comprehensive description of the Sapling protocol.
     > SAPLING_EMPTY_STATE ms /  S  =>  sapling_state ms : S
         with `sapling_state ms` being the empty state (ie. no one can spend tokens from it)
         with memo_size `ms`
-
 
 .. _MichelsonTickets_alpha:
 

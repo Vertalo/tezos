@@ -3,7 +3,7 @@
 (* Open Source License                                                       *)
 (* Copyright (c) 2018 Dynamic Ledger Solutions, Inc. <contact@tezos.com>     *)
 (* Copyright (c) 2020 Metastate AG <hello@metastate.dev>                     *)
-(* Copyright (c) 2021 Nomadic Labs, <contact@nomadic-labs.com>               *)
+(* Copyright (c) 2021-2022 Nomadic Labs <contact@nomadic-labs.com>           *)
 (*                                                                           *)
 (* Permission is hereby granted, free of charge, to any person obtaining a   *)
 (* copy of this software and associated documentation files (the "Software"),*)
@@ -24,6 +24,10 @@
 (* DEALINGS IN THE SOFTWARE.                                                 *)
 (*                                                                           *)
 (*****************************************************************************)
+
+(** This module defines RPC services to access the information associated to
+    delegates (who they are, their delegators, their different kinds of balances, their activity, etc.).
+*)
 
 open Alpha_context
 
@@ -47,7 +51,7 @@ type info = {
   delegated_balance : Tez.t;
   deactivated : bool;
   grace_period : Cycle.t;
-  voting_power : int64;
+  voting_info : Vote.delegate_info;
 }
 
 val info_encoding : info Data_encoding.t
@@ -114,6 +118,12 @@ val grace_period :
 
 val voting_power :
   'a #RPC_context.simple -> 'a -> public_key_hash -> int64 shell_tzresult Lwt.t
+
+val voting_info :
+  'a #RPC_context.simple ->
+  'a ->
+  public_key_hash ->
+  Vote.delegate_info shell_tzresult Lwt.t
 
 val participation :
   'a #RPC_context.simple ->

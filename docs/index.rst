@@ -23,7 +23,7 @@ The website https://tezos.com/ contains more information about the project.
 Octez
 -----
 
-Octez is an implementation of Tezos software, including a node, a client, a baker, an endorser, an accuser, and other tools, distributed with the Tezos economic protocols of Mainnet for convenience.
+Octez is an implementation of Tezos software, including a node, a client, a baker, an accuser, and other tools, distributed with the Tezos economic protocols of Mainnet for convenience.
 This implementation is available at https://gitlab.com/tezos/tezos.
 The source code is placed under the MIT Open Source License.
 
@@ -148,28 +148,21 @@ in the :ref:`introduction <howtoget>`.
 
 .. toctree::
    :maxdepth: 2
-   :caption: 011 Hangzhou Protocol doc:
+   :caption: Ithaca Protocol doc:
 
-   active/michelson
-   active/proof_of_stake
-   active/consensus
-   active/sapling
-   active/voting
-   active/liquidity_baking
-   active/timelock
-   active/plugins
+   active/protocol
    active/glossary
    active/cli-commands
    active/rpc
 
 .. toctree::
    :maxdepth: 2
-   :caption: 012 Ithaca Protocol doc:
+   :caption: Jakarta Protocol doc:
 
-   012/protocol
-   012/glossary
-   012/cli-commands
-   012/rpc
+   jakarta/protocol
+   jakarta/glossary
+   jakarta/cli-commands
+   jakarta/rpc
 
 .. toctree::
    :maxdepth: 2
@@ -204,8 +197,9 @@ in the :ref:`introduction <howtoget>`.
    developer/contributing
    developer/merge_team
    developer/guidelines
-   developer/repository
+   developer/repository_scope
    developer/time_measurement_ppx
+   developer/openmetrics
    README
 
 .. toctree::
@@ -223,6 +217,7 @@ in the :ref:`introduction <howtoget>`.
    protocols/010_granada
    protocols/011_hangzhou
    protocols/012_ithaca
+   protocols/013_jakarta
    protocols/alpha
 
 .. toctree::

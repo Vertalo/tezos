@@ -89,16 +89,16 @@ let cost_of_instr : type a s r f. (a, s, r, f) kinstr -> a -> s -> Gas.cost =
       let k = accu and (_, (map, _)) = stack in
       Interp_costs.map_get_and_update k map
   | IBig_map_mem _ ->
-      let (map, _) = stack in
+      let (Big_map map, _) = stack in
       Interp_costs.big_map_mem map.diff
   | IBig_map_get _ ->
-      let (map, _) = stack in
+      let (Big_map map, _) = stack in
       Interp_costs.big_map_get map.diff
   | IBig_map_update _ ->
-      let (_, (map, _)) = stack in
+      let (_, (Big_map map, _)) = stack in
       Interp_costs.big_map_update map.diff
   | IBig_map_get_and_update _ ->
-      let (_, (map, _)) = stack in
+      let (_, (Big_map map, _)) = stack in
       Interp_costs.big_map_get_and_update map.diff
   | IAdd_seconds_to_timestamp _ ->
       let n = accu and (t, _) = stack in
@@ -213,9 +213,15 @@ let cost_of_instr : type a s r f. (a, s, r, f) kinstr -> a -> s -> Gas.cost =
       Interp_costs.pairing_check_bls12_381 pairs
   | ISapling_verify_update _ ->
       let tx = accu in
+      let inputs = Gas_input_size.sapling_transaction_inputs tx in
+      let outputs = Gas_input_size.sapling_transaction_outputs tx in
+      let bound_data = Gas_input_size.sapling_transaction_bound_data tx in
+      Interp_costs.sapling_verify_update ~inputs ~outputs ~bound_data
+  | ISapling_verify_update_deprecated _ ->
+      let tx = accu in
       let inputs = List.length tx.inputs in
       let outputs = List.length tx.outputs in
-      Interp_costs.sapling_verify_update ~inputs ~outputs
+      Interp_costs.sapling_verify_update_deprecated ~inputs ~outputs
   | ISplit_ticket _ ->
       let ticket = accu and ((amount_a, amount_b), _) = stack in
       Interp_costs.split_ticket ticket.amount amount_a amount_b
@@ -327,9 +333,7 @@ let cost_of_instr : type a s r f. (a, s, r, f) kinstr -> a -> s -> Gas.cost =
   | IRead_ticket _ -> Interp_costs.read_ticket
   | IOpen_chest _ ->
       let _chest_key = accu and (chest, (time, _)) = stack in
-      Interp_costs.open_chest
-        ~chest
-        ~time:(Alpha_context.Script_int.to_zint time)
+      Interp_costs.open_chest ~chest ~time:(Script_int.to_zint time)
   | ILog _ -> Gas.free
  [@@ocaml.inline always]
  [@@coq_axiom_with_reason "unreachable expression `.` not handled"]
@@ -463,7 +467,7 @@ let apply ctxt gas capture_ty capture lam =
   let loc = Micheline.dummy_location in
   unparse_ty ~loc ctxt capture_ty >>?= fun (ty_expr, ctxt) ->
   match full_arg_ty with
-  | Pair_t (capture_ty, arg_ty, _) ->
+  | Pair_t (capture_ty, arg_ty, _, _) ->
       let arg_stack_ty = Item_t (arg_ty, Bot_t) in
       let full_descr =
         {
@@ -494,18 +498,19 @@ let apply ctxt gas capture_ty capture lam =
       let (gas, ctxt) = local_gas_counter_and_outdated_context ctxt in
       return (lam', ctxt, gas)
 
-(* [transfer (ctxt, sc) gas tez tp p destination entrypoint]
+(* [transfer (ctxt, sc) gas tez parameters_ty parameters destination entrypoint]
    creates an operation that transfers an amount of [tez] to
    a contract determined by [(destination, entrypoint)]
-   instantiated with argument [p] of type [tp]. *)
-let transfer (ctxt, sc) gas amount tp p destination entrypoint =
+   instantiated with argument [parameters] of type [parameters_ty]. *)
+let transfer (ctxt, sc) gas amount location parameters_ty parameters destination
+    entrypoint =
   (* [craft_transfer_parameters ctxt tp p] reorganizes, if need be, the
      parameters submitted by the interpreter to prepare them for the
      [Transaction] operation. *)
   let craft_transfer_parameters :
-      type a.
+      type a ac.
       context ->
-      a ty ->
+      (a, ac) ty ->
       (location, prim) Micheline.node ->
       Destination.t ->
       ((location, prim) Micheline.node * context) tzresult =
@@ -525,11 +530,8 @@ let transfer (ctxt, sc) gas amount tp p destination entrypoint =
     | Tx_rollup _ -> (
         let open Micheline in
         match tp with
-        | Pair_t (Ticket_t (tp, _), _, _) ->
-            Script_ir_translator.unparse_comparable_ty
-              ~loc:dummy_location
-              ctxt
-              tp
+        | Pair_t (Ticket_t (tp, _), _, _, _) ->
+            Script_ir_translator.unparse_ty ~loc:dummy_location ctxt tp
             >|? fun (ty, ctxt) -> (Seq (dummy_location, [p; ty]), ctxt)
         | _ ->
             (* TODO: https://gitlab.com/tezos/tezos/-/issues/2455
@@ -542,28 +544,32 @@ let transfer (ctxt, sc) gas amount tp p destination entrypoint =
   in
 
   let ctxt = update_context gas ctxt in
-  collect_lazy_storage ctxt tp p >>?= fun (to_duplicate, ctxt) ->
+  collect_lazy_storage ctxt parameters_ty parameters
+  >>?= fun (to_duplicate, ctxt) ->
   let to_update = no_lazy_storage_id in
   extract_lazy_storage_diff
     ctxt
     Optimized
-    tp
-    p
+    parameters_ty
+    parameters
     ~to_duplicate
     ~to_update
     ~temporary:true
-  >>=? fun (p, lazy_storage_diff, ctxt) ->
-  unparse_data ctxt Optimized tp p >>=? fun (p, ctxt) ->
-  Gas.consume ctxt (Script.strip_locations_cost p) >>?= fun ctxt ->
-  craft_transfer_parameters ctxt tp p destination >>?= fun (p, ctxt) ->
+  >>=? fun (parameters, lazy_storage_diff, ctxt) ->
+  unparse_data ctxt Optimized parameters_ty parameters
+  >>=? fun (unparsed_parameters, ctxt) ->
+  craft_transfer_parameters ctxt parameters_ty unparsed_parameters destination
+  >>?= fun (unparsed_parameters, ctxt) ->
+  Gas.consume ctxt (Script.strip_locations_cost unparsed_parameters)
+  >>?= fun ctxt ->
+  let transaction =
+    let parameters =
+      Script.lazy_expr (Micheline.strip_locations unparsed_parameters)
+    in
+    {amount; destination; entrypoint; parameters}
+  in
   let operation =
-    Transaction
-      {
-        amount;
-        destination;
-        entrypoint;
-        parameters = Script.lazy_expr (Micheline.strip_locations p);
-      }
+    Transaction {transaction; location; parameters_ty; parameters}
   in
   fresh_internal_nonce ctxt >>?= fun (ctxt, nonce) ->
   let iop = {source = sc.self; operation; nonce} in
@@ -571,48 +577,12 @@ let transfer (ctxt, sc) gas amount tp p destination entrypoint =
   let (gas, ctxt) = local_gas_counter_and_outdated_context ctxt in
   return (res, ctxt, gas)
 
-(* [create_contract (ctxt, sc) gas storage_ty param_ty code entrypoints
-   delegate credit init] creates an origination operation for a
-   contract represented by [code], with some [entrypoints], some initial
-   [credit] (taken to contract being executed), and an initial storage
-   [init] of type [storage_ty]. The type of the new contract argument
-   is [param_ty]. *)
-
-(* TODO: https://gitlab.com/tezos/tezos/-/issues/1688
-   Refactor the sharing part of unparse_script and create_contract *)
-let create_contract (ctxt, sc) gas storage_type param_type code views
-    entrypoints delegate credit init =
+(** [create_contract (ctxt, sc) gas storage_ty code delegate credit init]
+    creates an origination operation for a contract represented by [code], some
+    initial [credit] (withdrawn from the contract being executed), and an
+    initial storage [init] of type [storage_ty]. *)
+let create_contract (ctxt, sc) gas storage_type code delegate credit init =
   let ctxt = update_context gas ctxt in
-  let loc = Micheline.dummy_location in
-  unparse_parameter_ty ~loc ctxt param_type ~entrypoints
-  >>?= fun (unparsed_param_type, ctxt) ->
-  unparse_ty ~loc ctxt storage_type >>?= fun (unparsed_storage_type, ctxt) ->
-  let open Micheline in
-  let view name {input_ty; output_ty; view_code} views =
-    Prim
-      ( loc,
-        K_view,
-        [
-          String (loc, Script_string.to_string name);
-          input_ty;
-          output_ty;
-          view_code;
-        ],
-        [] )
-    :: views
-  in
-  let views = Script_map.fold view views [] |> List.rev in
-  let code =
-    strip_locations
-      (Seq
-         ( loc,
-           [
-             Prim (loc, K_parameter, [unparsed_param_type], []);
-             Prim (loc, K_storage, [unparsed_storage_type], []);
-             Prim (loc, K_code, [code], []);
-           ]
-           @ views ))
-  in
   collect_lazy_storage ctxt storage_type init >>?= fun (to_duplicate, ctxt) ->
   let to_update = no_lazy_storage_id in
   extract_lazy_storage_diff
@@ -626,17 +596,19 @@ let create_contract (ctxt, sc) gas storage_type param_type code views
   >>=? fun (init, lazy_storage_diff, ctxt) ->
   unparse_data ctxt Optimized storage_type init >>=? fun (storage, ctxt) ->
   Gas.consume ctxt (Script.strip_locations_cost storage) >>?= fun ctxt ->
-  let storage = strip_locations storage in
+  let storage = Micheline.strip_locations storage in
   Contract.fresh_contract_from_current_nonce ctxt >>?= fun (ctxt, contract) ->
+  let origination =
+    {
+      credit;
+      delegate;
+      script =
+        {code = Script.lazy_expr code; storage = Script.lazy_expr storage};
+    }
+  in
   let operation =
     Origination
-      {
-        credit;
-        delegate;
-        preorigination = Some contract;
-        script =
-          {code = Script.lazy_expr code; storage = Script.lazy_expr storage};
-      }
+      {origination; preorigination = contract; storage_type; storage = init}
   in
   fresh_internal_nonce ctxt >>?= fun (ctxt, nonce) ->
   let piop = Internal_operation {source = sc.self; operation; nonce} in
@@ -873,14 +845,18 @@ type ('a, 'b, 'c, 'd, 'e, 'f) ilsr_nat_type =
   Script_int.n Script_int.num * 'b ->
   ('e * 'f * outdated_context * local_gas_counter, error trace) result Lwt.t
 
-type ('a, 'b) ifailwith_type =
-  logger option ->
-  outdated_context * step_constants ->
-  local_gas_counter ->
-  Script.location ->
-  'a ty ->
-  'a ->
-  ('b, error trace) result Lwt.t
+type ifailwith_type = {
+  ifailwith :
+    'a 'ac 'b.
+    logger option ->
+    outdated_context * step_constants ->
+    local_gas_counter ->
+    Script.location ->
+    ('a, 'ac) ty ->
+    'a ->
+    ('b, error trace) result Lwt.t;
+}
+[@@unboxed]
 
 type ('a, 'b, 'c, 'd, 'e, 'f, 'g) iexec_type =
   logger option ->

@@ -25,6 +25,7 @@
 (*                                                                           *)
 (*****************************************************************************)
 
+module Assert_lib = Lib_test_extra.Assert_lib
 open Test_utils
 
 let check_import_invariants ~test_descr ~rolling
@@ -46,7 +47,7 @@ let check_import_invariants ~test_descr ~rolling
           imported_chain_store
           [exported_block]
       in
-      Assert.equal_block
+      Assert_lib.Crypto.equal_block
         ~msg:("imported head consistency: " ^ test_descr)
         (Store.Block.header exported_block)
         (Store.Block.header head) ;
@@ -91,7 +92,7 @@ let check_import_invariants ~test_descr ~rolling
       Assert.equal
         ~msg:("caboose consistency: " ^ __LOC__)
         ~eq:Int32.equal
-        ~prn:Int32.to_string
+        ~pp:(fun ppf -> Format.fprintf ppf "%ld")
         expected_caboose_level
         (snd caboose) ;
       return_unit)
@@ -118,6 +119,8 @@ let export_import ~test_descr ~previously_baked_blocks ?exported_block_hash
       ~store_dir
       ~context_dir
       ~chain_name
+      ~on_disk:false
+      ~progress_display_mode:Animation.Auto
       genesis
   in
   let dir = store_dir // "imported_store" in
@@ -130,8 +133,12 @@ let export_import ~test_descr ~previously_baked_blocks ?exported_block_hash
       ~dst_store_dir
       ~dst_context_dir
       ~chain_name
+      ~configured_history_mode:None
       ~user_activated_upgrades:[]
       ~user_activated_protocol_overrides:[]
+      ~operation_metadata_size_limit:None
+      ~in_memory:false
+      ~progress_display_mode:Animation.Auto
       genesis
   in
   let* store' =
@@ -238,7 +245,7 @@ let check_baking_continuity ~test_descr ~exported_chain_store
       return last
     else Store.Block.read_block_by_level exported_chain_store level_to_reach
   in
-  Assert.equal_block
+  Assert_lib.Crypto.equal_block
     ~msg:("check both head after baking: " ^ test_descr)
     (Store.Block.header last)
     (Store.Block.header last') ;
@@ -247,8 +254,8 @@ let check_baking_continuity ~test_descr ~exported_chain_store
   let*! checkpoint' = Store.Chain.checkpoint imported_chain_store in
   Assert.equal
     ~msg:("checkpoint equality: " ^ test_descr)
-    ~prn:(fun (hash, level) ->
-      Format.asprintf "%a (%ld)" Block_hash.pp hash level)
+    ~pp:(fun ppf (hash, level) ->
+      Format.fprintf ppf "%a (%ld)" Block_hash.pp hash level)
     checkpoint
     checkpoint' ;
   return_unit
@@ -374,7 +381,8 @@ let test store_path ~test_descr ?exported_block_level
 let make_tests speed genesis_parameters =
   let open Tezos_protocol_alpha.Protocol.Alpha_context in
   let {
-    Parameters.constants = {Constants.blocks_per_cycle; preserved_cycles; _};
+    Parameters.constants =
+      {Constants.Parametric.blocks_per_cycle; preserved_cycles; _};
     _;
   } =
     genesis_parameters
@@ -502,6 +510,8 @@ let test_rolling () =
         ~store_dir
         ~context_dir
         ~chain_name
+        ~on_disk:false
+        ~progress_display_mode:Animation.Auto
         genesis
     in
     let* () =
@@ -510,8 +520,12 @@ let test_rolling () =
         ~dst_store_dir
         ~dst_context_dir
         ~chain_name
+        ~configured_history_mode:None
         ~user_activated_upgrades:[]
         ~user_activated_protocol_overrides:[]
+        ~operation_metadata_size_limit:None
+        ~in_memory:false
+        ~progress_display_mode:Animation.Auto
         genesis
     in
     let* store' =
@@ -527,7 +541,6 @@ let test_rolling () =
     let chain_store' = Store.main_chain_store store' in
     let* _head = Alpha_utils.bake_until_n_cycle_end chain_store' 4 head in
     let*! checkpoint = Store.Chain.checkpoint chain_store' in
-    let prn i = Format.sprintf "%ld" i in
     let* checkpoint_block =
       Store.Block.read_block chain_store' (fst checkpoint)
     in
@@ -539,12 +552,7 @@ let test_rolling () =
         sub (snd checkpoint) (of_int (Store.Block.max_operations_ttl metadata)))
     in
     let*! caboose = Store.Chain.caboose chain_store' in
-    Assert.equal
-      ~prn
-      ~msg:__LOC__
-      ~eq:Compare.Int32.equal
-      max_op_ttl_cp
-      (snd caboose) ;
+    Assert.Int32.equal ~msg:__LOC__ max_op_ttl_cp (snd caboose) ;
     let*! () = Store.close_store store' in
     return_unit
   in
@@ -626,6 +634,8 @@ let test_drag_after_import () =
         ~store_dir
         ~context_dir
         ~chain_name
+        ~on_disk:false
+        ~progress_display_mode:Animation.Auto
         genesis
     in
     let* () =
@@ -634,9 +644,13 @@ let test_drag_after_import () =
         ~dst_store_dir
         ~dst_context_dir
         ~chain_name
+        ~configured_history_mode:None
         ~user_activated_upgrades:[]
         ~user_activated_protocol_overrides:[]
+        ~operation_metadata_size_limit:None
         ~block:export_block_hash
+        ~in_memory:false
+        ~progress_display_mode:Animation.Auto
         genesis
     in
     let* store' =
@@ -663,13 +677,7 @@ let test_drag_after_import () =
         sub savepoint_level (of_int (Store.Block.max_operations_ttl metadata)))
     in
     let*! (_, caboose_level) = Store.Chain.caboose chain_store' in
-    let prn i = Format.sprintf "%ld" i in
-    Assert.equal
-      ~prn
-      ~msg:__LOC__
-      ~eq:Compare.Int32.equal
-      caboose_level
-      expected_caboose ;
+    Assert.Int32.equal ~msg:__LOC__ caboose_level expected_caboose ;
     let block_store = Store.Unsafe.get_block_store chain_store' in
     let rec restart n head =
       if n = 0 then return head

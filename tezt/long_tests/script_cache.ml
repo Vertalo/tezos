@@ -128,6 +128,7 @@ let originate_contract prefix contract =
   fun client storage ->
     let* contract_id =
       Client.originate_contract
+        ~log_output:false
         ~alias:(fresh ())
         ~amount:Tez.zero
         ~src:"bootstrap1"
@@ -177,6 +178,7 @@ let originate_very_small_contracts client n =
 let call_contract contract_id k client =
   let* () =
     Client.transfer
+      ~log_output:false
       ~amount:Tez.(of_int 100)
       ~burn_cap:Tez.(of_int 999999999)
       ~storage_limit:100000
@@ -194,6 +196,7 @@ let call_contract contract_id k client =
 let call_contracts calls client =
   let* () =
     Client.multiple_transfers
+      ~log_output:false
       ~fee_cap:Tez.(of_int 9999999)
       ~burn_cap:Tez.(of_int 9999999)
       ~giver:"bootstrap1"
@@ -762,13 +765,20 @@ let check_simulation_close_to_protocol_auto_activation ~executors ~migrate_from
     ~timeout:(Minutes 2000)
     ~executors
   @@ fun () ->
-  let* parameter_file =
-    Protocol.write_parameter_file
-      ~base:(Right (migrate_from, None))
+  let parameters =
+    if Protocol.number migrate_from >= 013 then
       [
-        (["blocks_per_cycle"], Some "20");
+        (["blocks_per_cycle"], Some "8");
+        (["cycles_per_voting_period"], Some "1");
+      ]
+    else
+      [
+        (["blocks_per_cycle"], Some "8");
         (["blocks_per_voting_period"], Some "8");
       ]
+  in
+  let* parameter_file =
+    Protocol.write_parameter_file ~base:(Right (migrate_from, None)) parameters
   in
   let* node = Node.init [Synchronisation_threshold 0] in
   let* client = Client.init ~endpoint:(Node node) () in

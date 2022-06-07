@@ -36,7 +36,7 @@
 open Tztest
 open Tx_rollup_l2_helpers
 open Protocol
-open Tx_rollup_l2_context
+open Tx_rollup_l2_context_sig
 
 (** {1. Storage and context tests. } *)
 
@@ -83,6 +83,11 @@ let test_irmin_storage () =
   (* 3. catch (fail e) f return == e *)
   let* e = catch (fail Test) (fun _ -> assert false) return in
   assert (e = Test) ;
+
+  (* 4. get (remove store k1) k1 = None *)
+  let* store = Irmin_storage.remove store k1 in
+  let* v = Irmin_storage.get store k1 in
+  assert (v = None) ;
 
   return_unit
 
@@ -312,31 +317,6 @@ module Test_Address_index = Test_index (struct
   let too_many = Too_many_l2_addresses
 end)
 
-(** [make_unit_ticket_key ctxt ticketer tx_rollup] computes the key hash of
-    the unit ticket crafted by [ticketer] and owned by [tx_rollup].
-
-    TODO: extracted from https://gitlab.com/tezos/tezos/-/merge_requests/4017,
-    is there a more convenient way to forge a ticket?
-*)
-let make_unit_ticket_key ctxt ticketer address =
-  let open Tezos_micheline.Micheline in
-  let open Michelson_v1_primitives in
-  let ticketer =
-    Bytes
-      ( 0,
-        Data_encoding.Binary.to_bytes_exn
-          Alpha_context.Contract.encoding
-          ticketer )
-  in
-  let ty = Prim (0, T_unit, [], []) in
-  let contents = Prim (0, D_Unit, [], []) in
-  let owner =
-    String (dummy_location, Tx_rollup_l2_address.to_b58check address)
-  in
-  match Alpha_context.Ticket_hash.make ctxt ~ticketer ~ty ~contents ~owner with
-  | Ok (x, _) -> x
-  | Error _ -> raise (Invalid_argument "make_unit_ticket_key")
-
 (** [gen_n_ticket_hash n] generates [n]  {!Alpha_context.Ticket_hash.t} based on
     {!gen_n_address} and {!make_unit_ticket_key}.
 
@@ -346,15 +326,13 @@ let make_unit_ticket_key ctxt ticketer address =
 let gen_n_ticket_hash n =
   let x =
     Lwt_main.run
-      ( Context.init n >>=? fun (b, contracts) ->
-        Incremental.begin_construction b >|=? Incremental.alpha_ctxt
-        >>=? fun ctxt ->
+      ( Context.init_n n () >>=? fun (_b, contracts) ->
         let addressess = gen_n_address n in
         let tickets =
           List.map2
             ~when_different_lengths:[]
             (fun contract (_, _, address) ->
-              make_unit_ticket_key ctxt contract address)
+              Tx_rollup_l2_helpers.make_unit_ticket_key contract address)
             contracts
             addressess
         in
@@ -420,17 +398,6 @@ module Test_Ticket_ledger = struct
 
     return_unit
 
-  (** Test that crediting a non strictly positive quantity fails. *)
-  let test_credit_invalid_quantity () =
-    let* (ctxt, idx1) = context_with_one_addr in
-    let* () =
-      expect_error
-        (credit ctxt ticket_idx1 idx1 Tx_rollup_l2_qty.zero)
-        Invalid_quantity
-    in
-
-    return_unit
-
   (** Test that an index can be credited ticket indexes even if its not associated
       to an address. *)
   let test_credit_unknown_index () =
@@ -478,81 +445,133 @@ module Test_Ticket_ledger = struct
 
     return_unit
 
+  let test_remove_empty_balance () =
+    let* (ctxt, idx1) = context_with_one_addr in
+
+    let* ctxt = credit ctxt ticket_idx1 idx1 Tx_rollup_l2_qty.one in
+    let* qty = Internal_for_tests.get_opt ctxt ticket_idx1 idx1 in
+    assert (qty = Some Tx_rollup_l2_qty.one) ;
+
+    let* ctxt = spend ctxt ticket_idx1 idx1 Tx_rollup_l2_qty.one in
+    let* qty = Internal_for_tests.get_opt ctxt ticket_idx1 idx1 in
+    assert (qty = None) ;
+
+    let* qty = get ctxt ticket_idx1 idx1 in
+    assert (qty = Tx_rollup_l2_qty.zero) ;
+
+    return_unit
+
   let tests =
     wrap_tztest_tests
       [
         ("test credit", test_credit);
         ("test credit too much", test_credit_too_much);
-        ("test credit invalid quantity", test_credit_invalid_quantity);
         ("test credit unknown index", test_credit_unknown_index);
         ("test spend", test_spend_valid);
         ("test spend without required balance", test_spend_without_balance);
+        ("test remove empty balance", test_remove_empty_balance);
       ]
 end
 
 (* ------ L2 Batch encodings ------------------------------------------------ *)
 
-let test_l2_operation_size () =
-  let open Protocol.Tx_rollup_l2_batch.V1 in
-  let open Data_encoding in
+module Test_batch_encodings = struct
+  open Lwt_result_syntax
+  open Protocol.Tx_rollup_l2_batch.V1
+  open Data_encoding
+
   (* Encoding from compact encoding *)
   let operation_content_encoding =
     Compact.make ~tag_size:`Uint8 compact_operation_content
-  in
-  let operation_encoding = Compact.make ~tag_size:`Uint8 compact_operation in
-  let transaction_encoding =
-    Compact.make ~tag_size:`Uint8 compact_transaction
-  in
+
+  let operation_encoding = Compact.make ~tag_size:`Uint8 compact_operation
+
+  let transaction_encoding = Compact.make ~tag_size:`Uint8 compact_transaction
+
   (* Helper functions to encode and decode *)
-  let encode_content op = Binary.to_bytes_exn operation_content_encoding op in
+  let encode_content op = Binary.to_bytes_exn operation_content_encoding op
+
   let decode_content buffer =
     Data_encoding.Binary.of_bytes_exn operation_content_encoding buffer
-  in
-  let encode_operation op = Binary.to_bytes_exn operation_encoding op in
-  let decode_operation buffer = Binary.of_bytes_exn operation_encoding buffer in
-  let encode_transaction t = Binary.to_bytes_exn transaction_encoding t in
+
+  let encode_operation op = Binary.to_bytes_exn operation_encoding op
+
+  let decode_operation buffer = Binary.of_bytes_exn operation_encoding buffer
+
+  let encode_transaction t = Binary.to_bytes_exn transaction_encoding t
+
   let decode_transaction buffer =
     Binary.of_bytes_exn transaction_encoding buffer
-  in
 
-  (* Assert the smallest operation_content size is 4 *)
-  let opc =
-    {
-      destination = Layer2 (Indexable.from_index_exn 0l);
-      ticket_hash = Indexable.from_index_exn 1l;
-      qty = Tx_rollup_l2_qty.of_int64_exn 12L;
-    }
-  in
-  let buffer = encode_content opc in
-  let opc' = decode_content buffer in
+  let operation_content_pp fmt = function
+    | Transfer {destination; ticket_hash; qty} ->
+        Format.fprintf
+          fmt
+          "@[<hov 2>Transfer:@ destination=%a,@ ticket_hash=%a,@ qty:%a@]"
+          Tx_rollup_l2_address.Indexable.pp
+          destination
+          Tx_rollup_l2_context_sig.Ticket_indexable.pp
+          ticket_hash
+          Tx_rollup_l2_qty.pp
+          qty
+    | Withdraw {destination; ticket_hash; qty} ->
+        Format.fprintf
+          fmt
+          "@[<hov 2>Withdraw:@ destination=%a,@ ticket_hash=%a,@ qty:%a@]"
+          Signature.Public_key_hash.pp
+          destination
+          Alpha_context.Ticket_hash.pp
+          ticket_hash
+          Tx_rollup_l2_qty.pp
+          qty
 
-  Alcotest.(check int "smallest transfer content" 4 (Bytes.length buffer)) ;
-  assert (opc = opc') ;
+  let test_l2_transaction_size () =
+    (* Assert the smallest operation_content size is 5 *)
+    let opc =
+      Transfer
+        {
+          destination = Indexable.from_index_exn 0l;
+          ticket_hash = Indexable.from_index_exn 1l;
+          qty = Tx_rollup_l2_qty.of_int64_exn 12L;
+        }
+    in
+    let buffer = encode_content opc in
+    let opc' = decode_content buffer in
 
-  (* Assert the smallest operation size is 7 *)
-  let op =
-    {signer = Indexable.from_index_exn 2l; counter = 0L; contents = [opc]}
-  in
-  let buffer = encode_operation op in
-  let op' = decode_operation buffer in
+    Alcotest.(check int "smallest operation content" 4 (Bytes.length buffer)) ;
+    assert (opc = opc') ;
 
-  Alcotest.(check int "smallest transfer" 7 (Bytes.length buffer)) ;
-  assert (op = op') ;
+    (* Assert the smallest operation size is 7 *)
+    let op =
+      {signer = Indexable.from_index_exn 2l; counter = 0L; contents = [opc]}
+    in
+    let buffer = encode_operation op in
+    let op' = decode_operation buffer in
 
-  (* Assert the smallest transaction size is 8 *)
-  let t = [op] in
-  let buffer = encode_transaction t in
-  let t' = decode_transaction buffer in
+    Alcotest.(check int "smallest operation" 7 (Bytes.length buffer)) ;
+    assert (op = op') ;
 
-  Alcotest.(check int "smallest transaction" 8 (Bytes.length buffer)) ;
-  assert (t = t') ;
+    (* Assert the smallest transaction size is 8 *)
+    let t = [op] in
+    let buffer = encode_transaction t in
+    let t' = decode_transaction buffer in
 
-  return_unit
+    Alcotest.(check int "smallest transaction" 8 (Bytes.length buffer)) ;
+    assert (t = t') ;
+
+    return_unit
+
+  let tests =
+    [
+      tztest
+        "test layer-2 transaction encoding size"
+        `Quick
+        test_l2_transaction_size;
+    ]
+end
 
 let tests =
   [tztest "test irmin storage" `Quick @@ wrap_test test_irmin_storage]
   @ Test_Address_index.tests @ Test_Ticket_index.tests
   @ Test_Address_medata.tests @ Test_Ticket_ledger.tests
-  @ [
-      tztest "test layer-2 operation encoding size" `Quick test_l2_operation_size;
-    ]
+  @ Test_batch_encodings.tests

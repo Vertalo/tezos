@@ -74,7 +74,7 @@ let parse_block s =
           WithExceptions.Option.get ~loc:__LOC__
           @@ List.assoc ~equal:Int.equal 1 counts
         in
-        (String.split delim s, delim)
+        (String.split_no_empty delim s, delim)
     | _ -> raise Exit
   in
   (* Converts a string representing a block level into a Int32. Fails
@@ -184,12 +184,12 @@ let operation_list_quota_encoding =
     (fun (max_size, max_op) -> {max_size; max_op})
     (obj2 (req "max_size" int31) (opt "max_op" int31))
 
-type raw_context = Key of Bytes.t | Dir of raw_context TzString.Map.t | Cut
+type raw_context = Key of Bytes.t | Dir of raw_context String.Map.t | Cut
 
 let rec raw_context_eq rc1 rc2 =
   match (rc1, rc2) with
   | (Key bytes1, Key bytes2) -> Bytes.equal bytes1 bytes2
-  | (Dir dir1, Dir dir2) -> TzString.Map.(equal raw_context_eq dir1 dir2)
+  | (Dir dir1, Dir dir2) -> String.Map.(equal raw_context_eq dir1 dir2)
   | (Cut, Cut) -> true
   | _ -> false
 
@@ -202,7 +202,7 @@ let rec pp_raw_context ppf = function
         "{@[<v 1>@,%a@]@,}"
         (Format.pp_print_list ~pp_sep:Format.pp_print_cut (fun ppf (s, t) ->
              Format.fprintf ppf "%s : %a" s pp_raw_context t))
-        (TzString.Map.bindings l)
+        (String.Map.bindings l)
 
 let raw_context_encoding =
   mu "raw_context" (fun encoding ->
@@ -218,12 +218,12 @@ let raw_context_encoding =
             (Tag 1)
             (assoc encoding)
             ~title:"Dir"
-            (function Dir map -> Some (TzString.Map.bindings map) | _ -> None)
+            (function Dir map -> Some (String.Map.bindings map) | _ -> None)
             (fun bindings ->
               Dir
                 (List.fold_left
-                   (fun wip_map (k, v) -> TzString.Map.add k v wip_map)
-                   TzString.Map.empty
+                   (fun wip_map (k, v) -> String.Map.add k v wip_map)
+                   String.Map.empty
                    bindings));
           case
             (Tag 2)
@@ -234,16 +234,16 @@ let raw_context_encoding =
         ])
 
 let raw_context_insert =
-  let default = Dir TzString.Map.empty in
+  let default = Dir String.Map.empty in
   (* not tail recursive but over the length of [k], which is small *)
   let rec aux (k, v) ctx =
-    let d = match ctx with Dir d -> d | Key _ | Cut -> TzString.Map.empty in
+    let d = match ctx with Dir d -> d | Key _ | Cut -> String.Map.empty in
     match k with
     | [] -> v
-    | [kh] -> Dir (TzString.Map.add kh v d)
+    | [kh] -> Dir (String.Map.add kh v d)
     | kh :: ktl ->
         Dir
-          (TzString.Map.update
+          (String.Map.update
              kh
              (fun ctxtopt ->
                let ctx' = Option.value ctxtopt ~default in
@@ -259,7 +259,7 @@ type merkle_node =
   | Data of raw_context
   | Continue of merkle_tree
 
-and merkle_tree = merkle_node TzString.Map.t
+and merkle_tree = merkle_node String.Map.t
 
 let rec merkle_node_eq n1 n2 =
   match (n1, n2) with
@@ -268,8 +268,7 @@ let rec merkle_node_eq n1 n2 =
   | (Continue mtree1, Continue mtree2) -> merkle_tree_eq mtree1 mtree2
   | _ -> false
 
-and merkle_tree_eq mtree1 mtree2 =
-  TzString.Map.equal merkle_node_eq mtree1 mtree2
+and merkle_tree_eq mtree1 mtree2 = String.Map.equal merkle_node_eq mtree1 mtree2
 
 type merkle_leaf_kind = Hole | Raw_context
 
@@ -281,7 +280,7 @@ let rec pp_merkle_node ppf = function
   | Continue tree -> Format.fprintf ppf "Continue(%a)" pp_merkle_tree tree
 
 and pp_merkle_tree ppf mtree =
-  let pairs = TzString.Map.bindings mtree in
+  let pairs = String.Map.bindings mtree in
   Format.fprintf
     ppf
     "{@[<v 1>@,%a@]@,}"
@@ -292,11 +291,11 @@ and pp_merkle_tree ppf mtree =
 let stringmap_encoding value_encoding =
   let open Data_encoding in
   conv
-    TzString.Map.bindings
+    String.Map.bindings
     (fun l ->
       List.fold_left
-        (fun acc (k, v) -> TzString.Map.add k v acc)
-        TzString.Map.empty
+        (fun acc (k, v) -> String.Map.add k v acc)
+        String.Map.empty
         l)
     (list (tup2 string value_encoding))
 
@@ -492,12 +491,17 @@ module Make (Proto : PROTO) (Next_proto : PROTO) = struct
                (dynamic_size Operation.shell_header_encoding)
                (dynamic_size Next_proto.operation_data_encoding)))
 
+  type operation_receipt =
+    | Empty
+    | Too_large
+    | Receipt of Proto.operation_receipt
+
   type operation = {
     chain_id : Chain_id.t;
     hash : Operation_hash.t;
     shell : Operation.shell_header;
     protocol_data : Proto.operation_data;
-    receipt : Proto.operation_receipt option;
+    receipt : operation_receipt;
   }
 
   let operation_data_encoding =
@@ -506,20 +510,31 @@ module Make (Proto : PROTO) (Next_proto : PROTO) = struct
       ~tag_size:`Uint8
       [
         case
-          ~title:"Operation with metadata"
+          ~title:"Operation with too large metadata"
           (Tag 0)
-          Proto.operation_data_and_receipt_encoding
+          (merge_objs
+             Proto.operation_data_encoding
+             (obj1 (req "metadata" (constant "too large"))))
           (function
-            | (operation_data, Some receipt) -> Some (operation_data, receipt)
+            | (operation_data, Too_large) -> Some (operation_data, ())
             | _ -> None)
-          (function
-            | (operation_data, receipt) -> (operation_data, Some receipt));
+          (fun (operation_data, ()) -> (operation_data, Too_large));
         case
           ~title:"Operation without metadata"
           (Tag 1)
           Proto.operation_data_encoding
-          (function (operation_data, None) -> Some operation_data | _ -> None)
-          (fun operation_data -> (operation_data, None));
+          (function
+            | (operation_data, Empty) -> Some operation_data | _ -> None)
+          (fun operation_data -> (operation_data, Empty));
+        case
+          ~title:"Operation with metadata"
+          (Tag 2)
+          Proto.operation_data_and_receipt_encoding
+          (function
+            | (operation_data, Receipt receipt) -> Some (operation_data, receipt)
+            | _ -> None)
+          (function
+            | (operation_data, receipt) -> (operation_data, Receipt receipt));
       ]
 
   let operation_encoding =
@@ -641,13 +656,27 @@ module Make (Proto : PROTO) (Next_proto : PROTO) = struct
           RPC_path.(path / "protocol_data" / "raw")
     end
 
+    let force_operation_metadata_query =
+      let open RPC_query in
+      query (fun force_metadata ->
+          object
+            method force_metadata = force_metadata
+          end)
+      |+ flag
+           "force_metadata"
+           ~descr:
+             "Forces to recompute the operations metadata if it was considered \
+              as too large."
+           (fun x -> x#force_metadata)
+      |> seal
+
     module Operations = struct
       let path = RPC_path.(path / "operations")
 
       let operations =
         RPC_service.get_service
           ~description:"All the operations included in the block."
-          ~query:RPC_query.empty
+          ~query:force_operation_metadata_query
           ~output:(list (dynamic_size (list operation_encoding)))
           path
 
@@ -678,7 +707,7 @@ module Make (Proto : PROTO) (Next_proto : PROTO) = struct
           ~description:
             "All the operations included in `n-th` validation pass of the \
              block."
-          ~query:RPC_query.empty
+          ~query:force_operation_metadata_query
           ~output:(list operation_encoding)
           RPC_path.(path /: list_arg)
 
@@ -686,7 +715,7 @@ module Make (Proto : PROTO) (Next_proto : PROTO) = struct
         RPC_service.get_service
           ~description:
             "The `m-th` operation in the `n-th` validation pass of the block."
-          ~query:RPC_query.empty
+          ~query:force_operation_metadata_query
           ~output:operation_encoding
           RPC_path.(path /: list_arg /: offset_arg)
     end
@@ -912,7 +941,7 @@ module Make (Proto : PROTO) (Next_proto : PROTO) = struct
           "All the information about a block. The associated metadata may not \
            be present depending on the history mode and block's distance from \
            the head."
-        ~query:RPC_query.empty
+        ~query:force_operation_metadata_query
         ~output:block_info_encoding
         path
 
@@ -1347,7 +1376,9 @@ module Make (Proto : PROTO) (Next_proto : PROTO) = struct
   let hash ctxt =
     let f = make_call0 S.hash ctxt in
     fun ?(chain = `Main) ?(block = `Head 0) () ->
-      match block with `Hash (h, 0) -> return h | _ -> f chain block () ()
+      match block with
+      | `Hash (h, 0) -> Lwt.return_ok h
+      | _ -> f chain block () ()
 
   let header ctxt =
     let f = make_call0 S.header ctxt in
@@ -1388,17 +1419,41 @@ module Make (Proto : PROTO) (Next_proto : PROTO) = struct
   module Operations = struct
     module S = S.Operations
 
-    let operations ctxt =
+    let operations ctxt ?(force_metadata = false) =
       let f = make_call0 S.operations ctxt in
-      fun ?(chain = `Main) ?(block = `Head 0) () -> f chain block () ()
+      fun ?(chain = `Main) ?(block = `Head 0) () ->
+        f
+          chain
+          block
+          (object
+             method force_metadata = force_metadata
+          end)
+          ()
 
-    let operations_in_pass ctxt =
+    let operations_in_pass ctxt ?(force_metadata = false) =
       let f = make_call1 S.operations_in_pass ctxt in
-      fun ?(chain = `Main) ?(block = `Head 0) n -> f chain block n () ()
+      fun ?(chain = `Main) ?(block = `Head 0) n ->
+        f
+          chain
+          block
+          n
+          (object
+             method force_metadata = force_metadata
+          end)
+          ()
 
-    let operation ctxt =
+    let operation ctxt ?(force_metadata = false) =
       let f = make_call2 S.operation ctxt in
-      fun ?(chain = `Main) ?(block = `Head 0) n m -> f chain block n m () ()
+      fun ?(chain = `Main) ?(block = `Head 0) n m ->
+        f
+          chain
+          block
+          n
+          m
+          (object
+             method force_metadata = force_metadata
+          end)
+          ()
   end
 
   module Operation_hashes = struct
@@ -1509,9 +1564,16 @@ module Make (Proto : PROTO) (Next_proto : PROTO) = struct
       fun ?(chain = `Main) ?(block = `Head 0) s -> f chain block s () ()
   end
 
-  let info ctxt =
+  let info ctxt ?(force_metadata = false) =
     let f = make_call0 S.info ctxt in
-    fun ?(chain = `Main) ?(block = `Head 0) () -> f chain block () ()
+    fun ?(chain = `Main) ?(block = `Head 0) () ->
+      f
+        chain
+        block
+        (object
+           method force_metadata = force_metadata
+        end)
+        ()
 
   module Mempool = struct
     type t = S.Mempool.t = {
@@ -1534,25 +1596,28 @@ module Make (Proto : PROTO) (Next_proto : PROTO) = struct
         ?(version = S.Mempool.default_pending_operations_version)
         ?(applied = true) ?(branch_delayed = true) ?(branch_refused = true)
         ?(refused = true) ?(outdated = true) () =
-      RPC_context.make_call1
-        (S.Mempool.pending_operations (mempool_path chain_path))
-        ctxt
-        chain
-        (object
-           method version = version
+      let open Lwt_result_syntax in
+      let* v =
+        RPC_context.make_call1
+          (S.Mempool.pending_operations (mempool_path chain_path))
+          ctxt
+          chain
+          (object
+             method version = version
 
-           method applied = applied
+             method applied = applied
 
-           method refused = refused
+             method refused = refused
 
-           method outdated = outdated
+             method outdated = outdated
 
-           method branch_refused = branch_refused
+             method branch_refused = branch_refused
 
-           method branch_delayed = branch_delayed
-        end)
-        ()
-      >>=? function
+             method branch_delayed = branch_delayed
+          end)
+          ()
+      in
+      match v with
       | Version_1 pending_operations | Version_0 pending_operations ->
           return pending_operations
 

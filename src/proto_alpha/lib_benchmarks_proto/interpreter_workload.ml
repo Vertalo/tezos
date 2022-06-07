@@ -1077,10 +1077,10 @@ module Instructions = struct
 
   let sapling_empty_state = ir_sized_step N_ISapling_empty_state nullary
 
-  let sapling_verify_update inputs outputs _state =
+  let sapling_verify_update inputs outputs bound_data _state =
     ir_sized_step
       N_ISapling_verify_update
-      (binary "inputs" inputs "outputs" outputs)
+      (ternary "inputs" inputs "outputs" outputs "bound_data" bound_data)
 
   let map_get_and_update key_size map_size =
     ir_sized_step
@@ -1203,17 +1203,18 @@ let extract_ir_sized_step :
       Instructions.map_get_and_update key_size (Size.map map)
   | (IMap_size (_, _), (map, _)) -> Instructions.map_size (Size.map map)
   | (IEmpty_big_map (_, _, _, _), _) -> Instructions.empty_big_map
-  | (IBig_map_mem (_, _), (v, ({diff = {size; _}; key_type; _}, _))) ->
+  | (IBig_map_mem (_, _), (v, (Big_map {diff = {size; _}; key_type; _}, _))) ->
       let key_size = Size.size_of_comparable_value key_type v in
       Instructions.big_map_mem key_size (Size.of_int size)
-  | (IBig_map_get (_, _), (v, ({diff = {size; _}; key_type; _}, _))) ->
+  | (IBig_map_get (_, _), (v, (Big_map {diff = {size; _}; key_type; _}, _))) ->
       let key_size = Size.size_of_comparable_value key_type v in
       Instructions.big_map_get key_size (Size.of_int size)
-  | (IBig_map_update (_, _), (v, (_, ({diff = {size; _}; key_type; _}, _)))) ->
+  | ( IBig_map_update (_, _),
+      (v, (_, (Big_map {diff = {size; _}; key_type; _}, _))) ) ->
       let key_size = Size.size_of_comparable_value key_type v in
       Instructions.big_map_update key_size (Size.of_int size)
   | ( IBig_map_get_and_update (_, _),
-      (v, (_, ({diff = {size; _}; key_type; _}, _))) ) ->
+      (v, (_, (Big_map {diff = {size; _}; key_type; _}, _))) ) ->
       let key_size = Size.size_of_comparable_value key_type v in
       Instructions.big_map_get_and_update key_size (Size.of_int size)
   | (IConcat_string (_, _), (ss, _)) ->
@@ -1365,8 +1366,15 @@ let extract_ir_sized_step :
   | (ISapling_verify_update (_, _), (transaction, (_state, _))) ->
       let inputs = Size.sapling_transaction_inputs transaction in
       let outputs = Size.sapling_transaction_outputs transaction in
+      let bound_data = Size.sapling_transaction_bound_data transaction in
       let state = Size.zero in
-      Instructions.sapling_verify_update inputs outputs state
+      Instructions.sapling_verify_update inputs outputs bound_data state
+  | (ISapling_verify_update_deprecated (_, _), (transaction, (_state, _))) ->
+      let inputs = List.length transaction.inputs in
+      let outputs = List.length transaction.outputs in
+      let bound_data = Size.zero in
+      let state = Size.zero in
+      Instructions.sapling_verify_update inputs outputs bound_data state
   | (IDig (_, n, _, _), _) -> Instructions.dig (Size.of_int n)
   | (IDug (_, n, _, _), _) -> Instructions.dug (Size.of_int n)
   | (IDipn (_, n, _, _, _), _) -> Instructions.dipn (Size.of_int n)
@@ -1414,9 +1422,7 @@ let extract_ir_sized_step :
       let plaintext_size =
         Script_timelock.get_plaintext_size chest - 1 |> Size.of_int
       in
-      let log_time =
-        Z.log2 Z.(one + Script_int_repr.to_zint time) |> Size.of_int
-      in
+      let log_time = Z.log2 Z.(one + Script_int.to_zint time) |> Size.of_int in
       Instructions.open_chest log_time plaintext_size
   | (IMin_block_time _, _) -> Instructions.min_block_time
 
@@ -1475,7 +1481,7 @@ let extract_deps (type bef_top bef aft_top aft) ctxt step_constants
   try
     let res =
       Lwt_main.run
-        (Script_interpreter.kstep
+        (Script_interpreter.Internals.kstep
            (Some logger)
            ctxt
            step_constants

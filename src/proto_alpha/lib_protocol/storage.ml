@@ -100,10 +100,10 @@ module Block_round : Simple_single_data_storage with type value = Round_repr.t =
     (Round_repr)
 
 module Tenderbake = struct
-  module First_level =
+  module First_level_of_protocol =
     Make_single_data_storage (Registered) (Raw_context)
       (struct
-        let name = ["first_level_of_Tenderbake"]
+        let name = ["first_level_of_protocol"]
       end)
       (Raw_level_repr)
 
@@ -347,6 +347,30 @@ module Contract = struct
     Indexed_context.Make_map
       (struct
         let name = ["frozen_deposits_limit"]
+      end)
+      (Tez_repr)
+
+  module Bond_id_index =
+    Make_indexed_subcontext
+      (Make_subcontext (Registered) (Indexed_context.Raw_context)
+         (struct
+           let name = ["bond_id_index"]
+         end))
+         (Make_index (Bond_id_repr.Index))
+
+  module Frozen_bonds =
+    Bond_id_index.Make_carbonated_map
+      (struct
+        let name = ["frozen_bonds"]
+      end)
+      (Tez_repr)
+
+  let fold_bond_ids = Bond_id_index.fold_keys
+
+  module Total_frozen_bonds =
+    Indexed_context.Make_map
+      (struct
+        let name = ["total_frozen_bonds"]
       end)
       (Tez_repr)
 end
@@ -839,18 +863,9 @@ module Public_key_hash = struct
 
   let to_path (key : public_key_hash) l =
     match key with
-    | Ed25519 h -> (
-        match Path_Ed25519.to_path h l with
-        | s :: t -> "ed25519" :: s :: t
-        | _ -> raise (Invalid_argument "Error: No path in ed25519"))
-    | Secp256k1 h -> (
-        match Path_Secp256k1.to_path h l with
-        | s :: t -> "secp256k1" :: s :: t
-        | _ -> raise (Invalid_argument "Error: No path in secp256k1"))
-    | P256 h -> (
-        match Path_P256.to_path h l with
-        | s :: t -> "p256" :: s :: t
-        | _ -> raise (Invalid_argument "Error: No path in p256"))
+    | Ed25519 h -> "ed25519" :: Path_Ed25519.to_path h l
+    | Secp256k1 h -> "secp256k1" :: Path_Secp256k1.to_path h l
+    | P256 h -> "p256" :: Path_P256.to_path h l
 
   let of_path : _ -> public_key_hash option = function
     | "ed25519" :: rest -> (
@@ -871,8 +886,8 @@ module Public_key_hash = struct
     let l1 = Path_Ed25519.path_length
     and l2 = Path_Secp256k1.path_length
     and l3 = Path_P256.path_length in
-    assert (match (l1, l2, l3) with (1, 1, 1) -> true | _ -> false) ;
-    2
+    assert (Compare.Int.(l1 = l2 && l2 = l3)) ;
+    l1 + 1
 end
 
 module Public_key_hash_index = Make_index (Public_key_hash)
@@ -1050,19 +1065,20 @@ module Stake = struct
   module Selected_distribution_for_cycle = Cycle.Selected_stake_distribution
 
   (* This is an index that is set to 0 by calls to
-     Stake_storage.selected_new_distribution_at_cycle_end and incremented (by 1)
-     by calls to Stake_storage.snapshot.
+     {!val:Stake_storage.selected_new_distribution_at_cycle_end} and incremented
+     (by 1) by calls to {!val:Stake_storage.snapshot}.
 
-     Stake_storage.snapshot is called in relation with constant
-     [Constants_storage.blocks_per_stake_snapshot] here in
-     [Level_storage.may_snapshot_rolls].
+     {!val:Stake_storage.snapshot} is called in relation with constant
+     [blocks_per_stake_snapshot] in {!val:Level_storage.may_snapshot_rolls}.
 
-     That is, the increment is effectively done every 512 blocks or so, and
-     reset at the end of cycles. So it goes up to around 16 (= 8192/512) for the
-     number of blocks per cycle is 8192, then comes back to 0, so that a UInt16
-     is big enough.
+     That is, the increment is done every [blocks_per_stake_snaphot] blocks and
+     reset at the end of cycles. So, it goes up to [blocks_per_cycle /
+     blocks_per_stake_snaphot], which is currently 16 (= 8192/512 -- the
+     concrete values can be found in
+     {!val:Default_parameters.constants_mainnet}), then comes back to 0, so that
+     a UInt16 is big enough.
 
-     The ratio above (blocks_per_cycle / blocks_per_stake_snapshot) is checked
+     The ratio [blocks_per_cycle / blocks_per_stake_snapshot] above is checked
      in {!val:Constants_repr.check_constants} to fit in a UInt16. *)
   module Last_snapshot =
     Make_single_data_storage (Registered) (Raw_context)
@@ -1119,14 +1135,6 @@ module Vote = struct
         let name = ["current_proposal"]
       end)
       (Protocol_hash)
-
-  (* To be removed when removing migration from Ithaca *)
-  module Legacy_listings_size =
-    Make_single_data_storage (Registered) (Raw_context)
-      (struct
-        let name = ["listings_size"]
-      end)
-      (Encoding.Int32)
 
   module Voting_power_in_listings =
     Make_single_data_storage (Registered) (Raw_context)
@@ -1345,9 +1353,10 @@ module Pending_migration = struct
 end
 
 module Liquidity_baking = struct
-  module Escape_ema =
+  module Toggle_ema =
     Make_single_data_storage (Registered) (Raw_context)
       (struct
+        (* The old "escape" name is kept here to avoid migrating this. *)
         let name = ["liquidity_baking_escape_ema"]
       end)
       (Encoding.Int32)
@@ -1365,24 +1374,39 @@ module Ticket_balance = struct
     let name = ["ticket_balance"]
   end
 
-  module Sub_context = Make_subcontext (Registered) (Raw_context) (Name)
+  module Raw_context = Make_subcontext (Registered) (Raw_context) (Name)
+
+  module Paid_storage_space =
+    Make_single_data_storage (Registered) (Raw_context)
+      (struct
+        let name = ["paid_bytes"]
+      end)
+      (Encoding.Z)
+
+  module Used_storage_space =
+    Make_single_data_storage (Registered) (Raw_context)
+      (struct
+        let name = ["used_bytes"]
+      end)
+      (Encoding.Z)
+
+  module Table_context =
+    Make_subcontext (Registered) (Raw_context)
+      (struct
+        let name = ["table"]
+      end)
+
   module Index = Make_index (Ticket_hash_repr.Index)
   module Table =
-    Make_indexed_carbonated_data_storage (Sub_context) (Index) (Encoding.Z)
+    Make_indexed_carbonated_data_storage (Table_context) (Index) (Encoding.Z)
 end
 
 module Tx_rollup = struct
-  module Raw_context =
-    Make_subcontext (Registered) (Raw_context)
-      (struct
-        let name = ["tx_rollup"]
-      end)
-
   module Indexed_context =
     Make_indexed_subcontext
       (Make_subcontext (Registered) (Raw_context)
          (struct
-           let name = ["index"]
+           let name = ["tx_rollup"]
          end))
          (Make_index (Tx_rollup_repr.Index))
 
@@ -1395,78 +1419,32 @@ module Tx_rollup = struct
 
   module Level_context =
     Make_indexed_subcontext
-      (Make_subcontext (Registered) (Raw_context)
+      (Make_subcontext (Registered) (Indexed_context.Raw_context)
          (struct
            let name = ["tx_level"]
          end))
          (Make_index (Tx_rollup_level_repr.Index))
 
-  module Level_tx_rollup_context =
-    Make_indexed_subcontext
-      (Make_subcontext (Registered) (Level_context.Raw_context)
-         (struct
-           let name = ["tx_rollup"]
-         end))
-         (Make_index (Tx_rollup_repr.Index))
-
-  module Inbox_metadata =
-    Level_tx_rollup_context.Make_carbonated_map
+  module Inbox =
+    Level_context.Make_carbonated_map
       (struct
-        let name = ["inbox_size"]
+        let name = ["inbox"]
       end)
       (struct
-        type t = Tx_rollup_inbox_repr.metadata
+        type t = Tx_rollup_inbox_repr.t
 
-        let encoding = Tx_rollup_inbox_repr.metadata_encoding
+        let encoding = Tx_rollup_inbox_repr.encoding
       end)
 
-  module Message_index = struct
-    type t = int32
-
-    let compare = Compare.Int32.compare
-
-    let encoding = Data_encoding.int32
-
-    let rpc_arg = RPC_arg.int32
-
-    let path_length = 1
-
-    let to_path i l = Int32.to_string i :: l
-
-    let of_path = function
-      | [] | _ :: _ :: _ -> None
-      | [i] -> Int32.of_string_opt i
-  end
-
-  module Message_indexed_context =
-    Make_subcontext (Registered) (Level_tx_rollup_context.Raw_context)
+  module Revealed_withdrawals =
+    Level_context.Make_carbonated_map
       (struct
-        let name = ["inbox_contents"]
+        let name = ["withdrawals"]
       end)
-
-  module Inbox_contents =
-    Make_indexed_carbonated_data_storage
-      (Message_indexed_context)
-      (Make_index (Message_index))
-      (struct
-        type t = Tx_rollup_message_repr.hash
-
-        let encoding = Tx_rollup_message_repr.hash_encoding
-      end)
-
-  module Level_indexed_context =
-    Make_indexed_subcontext
-      (Make_subcontext (Registered) (Raw_context)
-         (struct
-           let name = ["tx_rollup_level"]
-         end))
-         (Pair
-            (Make_index
-               (Tx_rollup_level_repr.Index))
-               (Make_index (Tx_rollup_repr.Index)))
+      (Bitset)
 
   module Commitment =
-    Level_indexed_context.Make_carbonated_map
+    Level_context.Make_carbonated_map
       (struct
         let name = ["commitment"]
       end)
@@ -1474,16 +1452,16 @@ module Tx_rollup = struct
 
   module Bond_indexed_context =
     Make_indexed_subcontext
-      (Make_subcontext (Registered) (Raw_context)
+      (Make_subcontext (Registered) (Indexed_context.Raw_context)
          (struct
-           let name = ["tx_rollup_bond"]
+           let name = ["bond"]
          end))
-         (Pair (Make_index (Tx_rollup_repr.Index)) (Public_key_hash_index))
+         (Public_key_hash_index)
 
   module Commitment_bond =
     Bond_indexed_context.Make_carbonated_map
       (struct
-        let name = ["commitment_bond"]
+        let name = ["commitment"]
       end)
       (struct
         type t = int
@@ -1524,9 +1502,20 @@ module Sc_rollup = struct
         let name = ["boot_sector"]
       end)
       (struct
-        type t = Sc_rollup_repr.PVM.boot_sector
+        type t = string
 
-        let encoding = Sc_rollup_repr.PVM.boot_sector_encoding
+        let encoding = Data_encoding.string
+      end)
+
+  module Initial_level =
+    Indexed_context.Make_map
+      (struct
+        let name = ["initial_level"]
+      end)
+      (struct
+        type t = Raw_level_repr.t
+
+        let encoding = Raw_level_repr.encoding
       end)
 
   module Inbox =
@@ -1535,15 +1524,15 @@ module Sc_rollup = struct
         let name = ["inbox"]
       end)
       (struct
-        type t = Sc_rollup_inbox.t
+        type t = Sc_rollup_inbox_repr.t
 
-        let encoding = Sc_rollup_inbox.encoding
+        let encoding = Sc_rollup_inbox_repr.encoding
       end)
 
-  module Last_final_commitment =
+  module Last_cemented_commitment =
     Indexed_context.Make_carbonated_map
       (struct
-        let name = ["last_final_commitment"]
+        let name = ["last_cemented_commitment"]
       end)
       (struct
         type t = Sc_rollup_repr.Commitment_hash.t
@@ -1564,10 +1553,10 @@ module Sc_rollup = struct
         let encoding = Sc_rollup_repr.Commitment_hash.encoding
       end)
 
-  module Stakers_size =
+  module Staker_count =
     Indexed_context.Make_carbonated_map
       (struct
-        let name = ["stakers_size"]
+        let name = ["staker_count"]
       end)
       (struct
         type t = int32
@@ -1599,5 +1588,18 @@ module Sc_rollup = struct
            type t = int32
 
            let encoding = Data_encoding.int32
+         end)
+
+  module Commitment_added =
+    Make_indexed_carbonated_data_storage
+      (Make_subcontext (Registered) (Indexed_context.Raw_context)
+         (struct
+           let name = ["commitment_added"]
+         end))
+         (Make_index (Sc_rollup_repr.Commitment_hash_index))
+         (struct
+           type t = Raw_level_repr.t
+
+           let encoding = Raw_level_repr.encoding
          end)
 end

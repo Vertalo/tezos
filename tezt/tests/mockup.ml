@@ -66,12 +66,7 @@ let transfer_data =
 let test_balances_after_transfer giver amount receiver =
   let (giver_balance_before, giver_balance_after) = giver in
   let (receiver_balance_before, receiver_balance_after) = receiver in
-  if
-    not
-      Tez.(
-        to_mutez giver_balance_after
-        < to_mutez giver_balance_before - to_mutez amount)
-  then
+  if not Tez.(giver_balance_after < giver_balance_before - amount) then
     Test.fail
       "Invalid balance of giver after transfer: %s (before it was %s)"
       (Tez.to_string giver_balance_after)
@@ -267,10 +262,10 @@ let test_same_transfer_twice =
   let mempool_file = Client.base_dir client // "mockup" // "mempool.json" in
   Log.info "Transfer %s from %s to %s" (Tez.to_string amount) giver receiver ;
   let* () = Client.transfer ~amount ~giver ~receiver client in
-  let* mempool1 = read_file mempool_file in
+  let mempool1 = read_file mempool_file in
   Log.info "Transfer %s from %s to %s" (Tez.to_string amount) giver receiver ;
   let* () = transfer_expected_to_fail ~amount ~giver ~receiver client in
-  let* mempool2 = read_file mempool_file in
+  let mempool2 = read_file mempool_file in
   Log.info "Checking that mempool is unchanged" ;
   if mempool1 <> mempool2 then
     Test.fail
@@ -294,11 +289,11 @@ let test_transfer_same_participants =
   let thrashpool_file = base_dir // "mockup" // "trashpool.json" in
   Log.info "Transfer %s from %s to %s" (Tez.to_string amount) giver receiver ;
   let* () = Client.transfer ~amount ~giver ~receiver client in
-  let* mempool1 = read_file mempool_file in
+  let mempool1 = read_file mempool_file in
   let amount = Tez.(amount + one) in
   Log.info "Transfer %s from %s to %s" (Tez.to_string amount) giver receiver ;
   let* () = transfer_expected_to_fail ~amount ~giver ~receiver client in
-  let* mempool2 = read_file mempool_file in
+  let mempool2 = read_file mempool_file in
   Log.info "Checking that mempool is unchanged" ;
   if mempool1 <> mempool2 then
     Test.fail
@@ -307,7 +302,7 @@ let test_transfer_same_participants =
       mempool2 ;
   Log.info
     "Checking that last operation was discarded into a newly created trashpool" ;
-  let* str = read_file thrashpool_file in
+  let str = read_file thrashpool_file in
   if String.equal str "" then
     Test.fail "Expected thrashpool to have one operation" ;
   return ()
@@ -512,56 +507,6 @@ let test_migration_constants ~migrate_from ~migrate_to =
           (JSON.encode const_migrated) ;
         Test.fail "Protocol constants mismatch"))
 
-let test_migration_ticket_balance ~migrate_from ~migrate_to =
-  Regression.register
-    ~__FILE__
-    ~title:
-      (sf
-         "(%s -> %s) ticket balance migration"
-         (Protocol.name migrate_from)
-         (Protocol.name migrate_to))
-    ~tags:["mockup"; "migration"; "tickets"]
-    ~output_file:("tickets" // "ticket_balance")
-    (fun () ->
-      let* context_json =
-        perform_migration
-          ~protocol:migrate_from
-          ~next_protocol:migrate_to
-          ~next_constants:Protocol.Constants_mainnet
-          ~pre_migration:(fun client ->
-            let* _ =
-              Client.originate_contract
-                ~alias:"with_tickets"
-                ~amount:Tez.zero
-                ~src:"bootstrap1"
-                ~prg:
-                  "file:./tezt/tests/contracts/proto_current_mainnet/tickets.tz"
-                ~init:"{}"
-                ~burn_cap:(Tez.of_int 2)
-                client
-            in
-            Client.transfer
-              ~amount:(Tez.of_int 0)
-              ~giver:"bootstrap1"
-              ~receiver:"with_tickets"
-              ~burn_cap:(Tez.of_int 1)
-              client)
-          ~post_migration:(fun client _ ->
-            let context_file =
-              Client.base_dir client // "mockup" // "context.json"
-            in
-            let json = JSON.parse_file context_file in
-            let json =
-              JSON.(
-                json |-> "context" |-> "context" |=> 0 |=> 1 |> as_list
-                |> List.find (fun item ->
-                       item |=> 0 |> as_string = "ticket_balance"))
-            in
-            return json)
-      in
-      Regression.capture (JSON.encode context_json) ;
-      return ())
-
 (** Test. Reproduce the scenario of https://gitlab.com/tezos/tezos/-/issues/1143 *)
 let test_origination_from_unrevealed_fees =
   Protocol.register_test
@@ -639,6 +584,25 @@ let test_empty_block_baking =
   Log.info "Baking pending operations..." ;
   Client.bake_for ~keys:[giver] client
 
+let test_storage_from_file =
+  Protocol.register_test
+    ~__FILE__
+    ~title:"(Mockup) Load storage and input from file."
+    ~tags:["mockup"; "client"; "run_script"]
+  @@ fun protocol ->
+  Format.printf "%s" @@ Unix.getcwd () ;
+  let* client = Client.init_mockup ~protocol () in
+  Lwt_io.with_temp_file (fun (temp_filename, pipe) ->
+      let* () = Lwt_io.write pipe "Unit" in
+      let* _storage =
+        Client.run_script
+          ~prg:"file:./tezt/tests/contracts/proto_alpha/very_small.tz"
+          ~storage:temp_filename
+          ~input:temp_filename
+          client
+      in
+      unit)
+
 let register ~protocols =
   test_rpc_list protocols ;
   test_same_transfer_twice protocols ;
@@ -649,7 +613,8 @@ let register ~protocols =
   test_multiple_baking protocols ;
   test_rpc_header_shell protocols ;
   test_origination_from_unrevealed_fees protocols ;
-  test_multiple_transfers protocols
+  test_multiple_transfers protocols ;
+  test_storage_from_file protocols
 
 let register_global_constants ~protocols =
   test_register_global_constant_success protocols ;
@@ -661,8 +626,5 @@ let register_global_constants ~protocols =
 
 let register_constant_migration ~migrate_from ~migrate_to =
   test_migration_constants ~migrate_from ~migrate_to
-
-let register_migration_ticket_balance ~migrate_from ~migrate_to =
-  test_migration_ticket_balance ~migrate_from ~migrate_to
 
 let register_protocol_independent () = test_migration_transfer ()

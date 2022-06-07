@@ -26,14 +26,14 @@
 open Alpha_context
 
 type ticket_transfer = {
-  destination : Contract.t;
+  destination : Destination.t;
   tickets : Ticket_scanner.ex_ticket list;
 }
 
 type ticket_token_diff = {
   ticket_token : Ticket_token.ex_token;
   total_amount : Script_int.n Script_int.num;
-  destinations : (Contract.t * Script_int.n Script_int.num) list;
+  destinations : (Destination.t * Script_int.n Script_int.num) list;
 }
 
 type error += Failed_to_get_script of Contract.t | Contract_not_originated
@@ -65,14 +65,26 @@ let () =
     (function Contract_not_originated -> Some () | _ -> None)
     (fun () -> Contract_not_originated)
 
-(** A carbonated map where the keys are contracts. *)
-module Contract_map = Carbonated_map.Make (struct
-  type t = Contract.t
+(** A carbonated map where the keys are destination (contract or tx_rollup). *)
+module Destination_map =
+  Carbonated_map.Make
+    (struct
+      type context = Alpha_context.context
 
-  let compare = Contract.compare
+      let consume = Alpha_context.Gas.consume
+    end)
+    (struct
+      type t = Destination.t
 
-  let compare_cost _ = Ticket_costs.Constants.cost_compare_key_contract
-end)
+      let compare = Destination.compare
+
+      (* TODO: #2667
+         Change cost-function to one for comparing destinations.
+         Not expected to have any performance impact but we should update for
+         completeness.
+      *)
+      let compare_cost _ = Ticket_costs.Constants.cost_compare_key_contract
+    end)
 
 (** A module for mapping ticket-tokens to a map of contract destinations and
     amounts. The values specify how to distribute the spending of a ticket-token
@@ -94,7 +106,7 @@ module Ticket_token_map = struct
   (** Adds a ticket-token with a destination and an amount to the map.
       The layout of the map parameter is as described above. Its type is:
 
-       (n num Contract_map.t) Ticket_token_map.t
+       (n num Destination_map.t) Ticket_token_map.t
 
       As explained above, the inner map expresses a list of destination
       contracts and outgoing amount pairs.
@@ -111,7 +123,7 @@ module Ticket_token_map = struct
         match old_val with
         | None ->
             (* Create a new map with a single contract-and amount pair. *)
-            let map = Contract_map.singleton destination amount in
+            let map = Destination_map.singleton destination amount in
             ok (Some map, ctxt)
         | Some destination_map ->
             (* Update the inner contract map *)
@@ -125,7 +137,7 @@ module Ticket_token_map = struct
                   (Some (Script_int.add_n prev_amount amount), ctxt)
               | None -> ok (Some amount, ctxt)
             in
-            Contract_map.update ctxt destination update destination_map
+            Destination_map.update ctxt destination update destination_map
             >|? fun (destination_map, ctxt) -> (Some destination_map, ctxt))
       map
 end
@@ -149,14 +161,28 @@ let parse_and_cache_script ctxt ~destination ~get_non_cached_script =
       Script_cache.insert ctxt destination (script, ex_script) size
       >>?= fun ctxt -> return (ex_script, ctxt)
 
-let tickets_of_transaction ctxt ~destination ~parameters =
+let cast_transaction_parameter (type a ac b bc) ctxt location
+    (entry_arg_ty : (a, ac) Script_typed_ir.ty)
+    (parameters_ty : (b, bc) Script_typed_ir.ty) (parameters : b) :
+    (a * context) tzresult Lwt.t =
+  Gas_monad.run
+    ctxt
+    (Script_ir_translator.ty_eq
+       ~error_details:(Informative location)
+       entry_arg_ty
+       parameters_ty)
+  >>?= fun (res, ctxt) ->
+  res >>?= fun Script_ir_translator.Eq -> return ((parameters : a), ctxt)
+
+let tickets_of_transaction ctxt ~destination ~entrypoint ~location
+    ~parameters_ty ~parameters =
   match Contract.is_implicit destination with
   | Some _ -> return (None, ctxt)
   | None ->
-      (* TODO: #2351
+      (* TODO: #2653
          Avoid having to load the script from the cache.
-         After internal operations are in place we should be able to use the
-         typed script directly.
+         This is currently in place to avoid regressions for type-checking
+         errors. We should be able to remove it.
       *)
       parse_and_cache_script
         ctxt
@@ -167,102 +193,104 @@ let tickets_of_transaction ctxt ~destination ~parameters =
           match script_opt with
           | None -> fail (Failed_to_get_script destination)
           | Some script -> return (script, ctxt))
-      >>=? fun (Script_ir_translator.Ex_script {arg_type; _}, ctxt) ->
-      Ticket_scanner.type_has_tickets ctxt arg_type
-      >>?= fun (has_tickets, ctxt) ->
-      (* Load the tickets from the parameters. *)
-      (* TODO: #2350
-         Avoid having to decode and parse the [parameters] node.
-         After internal operations are in place we should be able to use the
-         typed script directly.
-      *)
-      Script.force_decode_in_context
+      >>=? fun ( Script_ir_translator.Ex_script
+                   (Script {arg_type; entrypoints; _}),
+                 ctxt ) ->
+      (* Find the entrypoint type for the given entrypoint. *)
+      Gas_monad.run
         ctxt
-        ~consume_deserialization_gas:When_needed
+        (Script_ir_translator.find_entrypoint
+           ~error_details:(Informative ())
+           arg_type
+           entrypoints
+           entrypoint)
+      >>?= fun (res, ctxt) ->
+      res >>?= fun (Ex_ty_cstr {ty = entry_arg_ty; _}) ->
+      Ticket_scanner.type_has_tickets ctxt entry_arg_ty
+      >>?= fun (has_tickets, ctxt) ->
+      (* Check that the parameter's type matches that of the entry-point, and
+         cast the parameter if this is the case. *)
+      cast_transaction_parameter
+        ctxt
+        location
+        entry_arg_ty
+        parameters_ty
         parameters
-      >>?= fun (expr, ctxt) ->
-      Ticket_scanner.tickets_of_node
+      >>=? fun (parameters, ctxt) ->
+      Ticket_scanner.tickets_of_value
         ~include_lazy:true
         ctxt
         has_tickets
-        (Micheline.root expr)
-      >>=? fun (tickets, ctxt) -> return (Some {destination; tickets}, ctxt)
+        parameters
+      >>=? fun (tickets, ctxt) ->
+      return (Some {destination = Contract destination; tickets}, ctxt)
 
 (** Extract tickets of an origination operation by scanning the storage. *)
-let tickets_of_origination ctxt ~preorigination script =
-  match preorigination with
-  | None -> fail Contract_not_originated
-  | Some destination ->
-      (* TODO: #2351
-         Avoid having to load the script from the cache.
-         After internal operations are in place we should be able to use the
-         typed script directly.
-      *)
-      parse_and_cache_script
-        ctxt
-        ~destination
-        ~get_non_cached_script:(fun ctxt ->
-          (* For an origination operation we already have the script. *)
-          return (script, ctxt))
-      >>=? fun ( Script_ir_translator.Ex_script
-                   {
-                     storage;
-                     storage_type;
-                     code = _;
-                     arg_type = _;
-                     views = _;
-                     entrypoints = _;
-                     code_size = _;
-                   },
-                 ctxt ) ->
-      (* Extract any tickets from the storage. Note that if the type of the
-         contract storage does not contain tickets, storage is not scanned. *)
-      Ticket_scanner.type_has_tickets ctxt storage_type
-      >>?= fun (has_tickets, ctxt) ->
-      Ticket_scanner.tickets_of_value
-        ctxt
-        ~include_lazy:true
-        has_tickets
-        storage
-      >|=? fun (tickets, ctxt) -> (Some {tickets; destination}, ctxt)
+let tickets_of_origination ctxt ~preorigination ~storage_type ~storage =
+  (* Extract any tickets from the storage. Note that if the type of the contract
+     storage does not contain tickets, storage is not scanned. *)
+  Ticket_scanner.type_has_tickets ctxt storage_type
+  >>?= fun (has_tickets, ctxt) ->
+  Ticket_scanner.tickets_of_value ctxt ~include_lazy:true has_tickets storage
+  >|=? fun (tickets, ctxt) ->
+  (Some {tickets; destination = Destination.Contract preorigination}, ctxt)
 
-(* TODO: #2352
-   Extend operations scanning to support rollup-operations once ready.
-   Currently the only two operations that may involve ticket transfers are
-   originations and transactions. We will likely also need to support rollups.
- *)
 let tickets_of_operation ctxt
-    (Internal_operation {source = _; operation; nonce = _}) =
+    (Script_typed_ir.Internal_operation {source = _; operation; nonce = _}) =
   match operation with
-  | Reveal _ -> return (None, ctxt)
   | Transaction
       {
-        amount = _;
+        transaction =
+          {
+            amount = _;
+            parameters = _;
+            entrypoint;
+            destination = Destination.Contract destination;
+          };
+        location;
+        parameters_ty;
         parameters;
-        entrypoint = _;
-        destination = Destination.Contract destination;
       } ->
-      tickets_of_transaction ctxt ~destination ~parameters
-  | Transaction {destination = Destination.Tx_rollup _; _} ->
-      (* TODO: #2488
-         The ticket accounting for the recipient of rollup transactions
-         is currently done in the apply function, but should rather be
-         done in this module. *)
-      return (None, ctxt)
-  | Origination {delegate = _; script; credit = _; preorigination} ->
-      tickets_of_origination ctxt ~preorigination script
+      tickets_of_transaction
+        ctxt
+        ~destination
+        ~entrypoint
+        ~location
+        ~parameters_ty
+        ~parameters
+  | Transaction
+      {
+        transaction =
+          {
+            destination = Destination.Tx_rollup tx_rollup_dest;
+            parameters = _;
+            entrypoint;
+            amount = _;
+          };
+        location = _;
+        parameters_ty;
+        parameters;
+      } ->
+      if Entrypoint.(entrypoint = Tx_rollup.deposit_entrypoint) then
+        Tx_rollup_parameters.get_deposit_parameters parameters_ty parameters
+        >>?= fun {ex_ticket; l2_destination = _} ->
+        return
+          ( Some
+              {
+                destination = Destination.Tx_rollup tx_rollup_dest;
+                tickets = [ex_ticket];
+              },
+            ctxt )
+      else return (None, ctxt)
+  | Origination
+      {
+        origination = {delegate = _; script = _; credit = _};
+        preorigination;
+        storage_type;
+        storage;
+      } ->
+      tickets_of_origination ctxt ~preorigination ~storage_type ~storage
   | Delegation _ -> return (None, ctxt)
-  | Register_global_constant _ -> return (None, ctxt)
-  | Set_deposits_limit _ -> return (None, ctxt)
-  | Tx_rollup_origination -> return (None, ctxt)
-  | Tx_rollup_submit_batch _ -> return (None, ctxt)
-  | Tx_rollup_commit _ -> return (None, ctxt)
-  | Tx_rollup_return_bond _ -> return (None, ctxt)
-  | Tx_rollup_finalize_commitment _ -> return (None, ctxt)
-  | Tx_rollup_remove_commitment _ -> return (None, ctxt)
-  | Tx_rollup_rejection _ -> return (None, ctxt)
-  | Sc_rollup_originate {kind = _; boot_sector = _} -> return (None, ctxt)
-  | Sc_rollup_add_messages {rollup = _; messages = _} -> return (None, ctxt)
 
 let add_transfer_to_token_map ctxt token_map {destination; tickets} =
   List.fold_left_es
@@ -293,7 +321,7 @@ let ticket_diffs_of_operations ctxt operations =
     (fun ctxt acc ticket_token destination_map ->
       (* Calculate the total amount of outgoing units for the current
          ticket-token. *)
-      Contract_map.fold
+      Destination_map.fold
         ctxt
         (fun ctxt total_amount _destination amount ->
           Gas.consume ctxt (Ticket_costs.add_int_cost total_amount amount)
@@ -301,7 +329,8 @@ let ticket_diffs_of_operations ctxt operations =
         Script_int.zero_n
         destination_map
       >>? fun (total_amount, ctxt) ->
-      Contract_map.to_list ctxt destination_map >|? fun (destinations, ctxt) ->
+      Destination_map.to_list ctxt destination_map
+      >|? fun (destinations, ctxt) ->
       ({ticket_token; total_amount; destinations} :: acc, ctxt))
     []
     token_map

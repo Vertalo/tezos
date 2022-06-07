@@ -75,7 +75,7 @@ val get_constants : t -> Constants.t tzresult Lwt.t
 
 (** The default constants used in the test framework. To be used with
     [init_with_constants]. *)
-val default_test_contants : Constants.parametric
+val default_test_constants : Constants.Parametric.t
 
 val get_baking_reward_fixed_portion : t -> Tez.t tzresult Lwt.t
 
@@ -110,6 +110,13 @@ module Vote : sig
   val get_protocol : Block.t -> Protocol_hash.t Lwt.t
 
   val set_participation_ema : Block.t -> int32 -> Block.t Lwt.t
+
+  type delegate_info = Alpha_context.Vote.delegate_info = {
+    voting_power : Int64.t option;
+    current_ballot : Alpha_context.Vote.ballot option;
+    current_proposals : Protocol_hash.t list;
+    remaining_proposals : int;
+  }
 end
 
 module Contract : sig
@@ -117,12 +124,16 @@ module Contract : sig
 
   val equal : Contract.t -> Contract.t -> bool
 
-  val pkh : Contract.t -> public_key_hash tzresult Lwt.t
+  val pkh : Contract.t -> public_key_hash
 
   (** Returns the balance of a contract, by default the main balance.
       If the contract is implicit the frozen balances are available too:
       deposit, fees or rewards. *)
   val balance : t -> Contract.t -> Tez.t tzresult Lwt.t
+
+  val frozen_bonds : t -> Contract.t -> Tez.t tzresult Lwt.t
+
+  val balance_and_frozen_bonds : t -> Contract.t -> Tez.t tzresult Lwt.t
 
   val counter : t -> Contract.t -> Z.t tzresult Lwt.t
 
@@ -152,7 +163,7 @@ module Delegate : sig
     delegated_balance : Tez.t;
     deactivated : bool;
     grace_period : Cycle.t;
-    voting_power : int64;
+    voting_info : Vote.delegate_info;
   }
 
   val info : t -> public_key_hash -> Delegate_services.info tzresult Lwt.t
@@ -172,6 +183,8 @@ module Delegate : sig
 
   val deactivated : t -> public_key_hash -> bool tzresult Lwt.t
 
+  val voting_info : t -> public_key_hash -> Vote.delegate_info tzresult Lwt.t
+
   val participation :
     t -> public_key_hash -> Delegate.participation_info tzresult Lwt.t
 end
@@ -179,16 +192,34 @@ end
 module Tx_rollup : sig
   val state : t -> Tx_rollup.t -> Tx_rollup_state.t tzresult Lwt.t
 
-  (** [inbox ctxt tx_rollup] returns the inbox of this transaction
-      rollup at the current level. If the inbox does not exist, the
+  (** [inbox ctxt tx_rollup level] returns the inbox of this
+      transaction rollup at [level]. If the inbox does not exist, the
       function returns an error. *)
   val inbox :
-    t -> Tx_rollup.t -> Tx_rollup_level.t -> Tx_rollup_inbox.t tzresult Lwt.t
+    t ->
+    Tx_rollup.t ->
+    Tx_rollup_level.t ->
+    Tx_rollup_inbox.t option tzresult Lwt.t
+
+  (** [commitment ctxt tx_rollup] returns the commitment of this
+      transaction rollup at [level]. If the commitment does not exist,
+      the function returns an error. *)
+  val commitment :
+    t ->
+    Tx_rollup.t ->
+    Tx_rollup_level.t ->
+    Tx_rollup_commitment.Submitted_commitment.t option tzresult Lwt.t
 end
 
-(** [init n] : returns an initial block with [n] initialized accounts
-    and the associated implicit contracts *)
-val init :
+type (_, _) tup =
+  | T1 : ('a, 'a) tup
+  | T2 : ('a, 'a * 'a) tup
+  | T3 : ('a, 'a * 'a * 'a) tup
+  | TList : int -> ('a, 'a list) tup
+
+val tup_hd : ('a, 'elts) tup -> 'elts -> 'a
+
+type 'accounts init :=
   ?rng_state:Random.State.t ->
   ?commitments:Commitment.t list ->
   ?initial_balances:int64 list ->
@@ -205,54 +236,49 @@ val init :
   ?blocks_per_cycle:int32 ->
   ?cycles_per_voting_period:int32 ->
   ?tx_rollup_enable:bool ->
+  ?tx_rollup_sunset_level:int32 ->
+  ?tx_rollup_origination_size:int ->
   ?sc_rollup_enable:bool ->
-  int ->
-  (Block.t * Alpha_context.Contract.t list) tzresult Lwt.t
+  unit ->
+  (Block.t * 'accounts) tzresult Lwt.t
+
+(** [init_n n] : returns an initial block with [n] initialized accounts
+    and the associated implicit contracts *)
+val init_n : int -> Alpha_context.Contract.t list init
 
 (** [init1] : returns an initial block with 1 initialized bootstrap account
     and the associated implicit contract *)
-val init1 :
-  ?rng_state:Random.State.t ->
-  ?commitments:Commitment.t list ->
-  ?initial_balances:int64 list ->
-  ?consensus_threshold:int ->
-  ?min_proposal_quorum:int32 ->
-  ?level:int32 ->
-  ?cost_per_byte:Tez.t ->
-  ?liquidity_baking_subsidy:Tez.t ->
-  ?endorsing_reward_per_slot:Tez.t ->
-  ?baking_reward_bonus_per_slot:Tez.t ->
-  ?baking_reward_fixed_portion:Tez.t ->
-  ?origination_size:int ->
-  ?blocks_per_cycle:int32 ->
-  ?cycles_per_voting_period:int32 ->
-  unit ->
-  (Block.t * Alpha_context.Contract.t) tzresult Lwt.t
+val init1 : Alpha_context.Contract.t init
 
 (** [init2] : returns an initial block with 2 initialized bootstrap accounts
     and the associated implicit contracts *)
-val init2 :
-  ?rng_state:Random.State.t ->
-  ?commitments:Commitment.t list ->
-  ?initial_balances:int64 list ->
-  ?consensus_threshold:int ->
-  ?min_proposal_quorum:int32 ->
-  ?level:int32 ->
-  ?cost_per_byte:Tez.t ->
-  ?liquidity_baking_subsidy:Tez.t ->
-  ?endorsing_reward_per_slot:Tez.t ->
-  ?baking_reward_bonus_per_slot:Tez.t ->
-  ?baking_reward_fixed_portion:Tez.t ->
-  ?origination_size:int ->
-  ?blocks_per_cycle:int32 ->
-  ?cycles_per_voting_period:int32 ->
-  unit ->
-  (Block.t * Alpha_context.Contract.t * Alpha_context.Contract.t) tzresult Lwt.t
+val init2 : (Alpha_context.Contract.t * Alpha_context.Contract.t) init
 
-val init_with_constants :
-  Constants.parametric ->
+(** [init3] : returns an initial block with 3 initialized bootstrap accounts
+    and the associated implicit contracts *)
+val init3 :
+  (Alpha_context.Contract.t
+  * Alpha_context.Contract.t
+  * Alpha_context.Contract.t)
+  init
+
+val init_with_constants_gen :
+  (Alpha_context.Contract.t, 'contracts) tup ->
+  Constants.Parametric.t ->
+  (Block.t * 'contracts) tzresult Lwt.t
+
+val init_with_constants_n :
+  Constants.Parametric.t ->
   int ->
   (Block.t * Alpha_context.Contract.t list) tzresult Lwt.t
+
+val init_with_constants1 :
+  Constants.Parametric.t -> (Block.t * Alpha_context.Contract.t) tzresult Lwt.t
+
+val init_with_constants2 :
+  Constants.Parametric.t ->
+  (Block.t * (Alpha_context.Contract.t * Alpha_context.Contract.t)) tzresult
+  Lwt.t
 
 (** [default_raw_context] returns a [Raw_context.t] for use in tests
     below [Alpha_context] *)

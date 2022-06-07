@@ -52,15 +52,15 @@ val consume_gas_steps :
 (** [has_tickets_of_ty_cost ty] returns the cost of producing a [has_tickets],
     used internally in the [Ticket_scanner] module. *)
 val has_tickets_of_ty_cost :
-  'a Script_typed_ir.ty -> Saturation_repr.may_saturate Saturation_repr.t
+  ('a, _) Script_typed_ir.ty -> Saturation_repr.may_saturate Saturation_repr.t
 
 (** [negate_cost z] returns the cost of negating the given value [z]. *)
 val negate_cost : Z.t -> Alpha_context.Gas.cost
 
 (** [add_int_cost n1 n2] returns the cost of adding the values [n1] and [n2]. *)
 val add_int_cost :
-  Alpha_context.Script_int.n Alpha_context.Script_int.num ->
-  Alpha_context.Script_int.n Alpha_context.Script_int.num ->
+  Script_int.n Script_int.num ->
+  Script_int.n Script_int.num ->
   Alpha_context.Gas.cost
 
 (** [add_z_cost z1 z2] returns the cost of adding the values [z1] and [z2]. *)

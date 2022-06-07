@@ -51,10 +51,12 @@ type error += Cannot_serialize_storage
 type error += Michelson_too_many_recursive_calls
 
 type execution_result = {
-  ctxt : context;
+  script : Script_ir_translator.ex_script;
+  code_size : int;
   storage : Script.expr;
   lazy_storage_diff : Lazy_storage.diffs option;
   operations : packed_internal_operation list;
+  ticket_diffs : Z.t Ticket_token_map.t;
 }
 
 type step_constants = Script_typed_ir.step_constants = {
@@ -67,15 +69,6 @@ type step_constants = Script_typed_ir.step_constants = {
   now : Script_timestamp.t;
   level : Script_int.n Script_int.num;
 }
-
-val step :
-  logger option ->
-  context ->
-  Script_typed_ir.step_constants ->
-  ('a, 's, 'r, 'f) Script_typed_ir.kdescr ->
-  'a ->
-  's ->
-  ('r * 'f * context) tzresult Lwt.t
 
 (** [execute ?logger ctxt ~cached_script mode step_constant ~script
    ~entrypoint ~parameter ~internal] interprets the [script]'s
@@ -108,23 +101,27 @@ val execute :
   entrypoint:Entrypoint.t ->
   parameter:Script.expr ->
   internal:bool ->
-  (execution_result * (Script_ir_translator.ex_script * int)) tzresult Lwt.t
+  (execution_result * context) tzresult Lwt.t
 
-(** [kstep logger ctxt step_constants kinstr accu stack] interprets the
-    script represented by [kinstr] under the context [ctxt]. This will
-    turn a stack whose topmost element is [accu] and remaining elements
-    [stack] into a new accumulator and a new stack. This function also
-    returns an updated context. If [logger] is given, [kstep] calls back
-    its functions at specific points of the execution. The execution is
-    parameterized by some [step_constants]. *)
-val kstep :
-  logger option ->
-  context ->
+(** [execute_with_typed_parameter ?logger ctxt ~cached_script mode
+   step_constant ~script ~entrypoint loc ~parameter_ty ~parameter ~internal]
+   interprets the [script]'s [entrypoint] for a given (typed) [parameter].
+
+   See {!execute} for more details about the function's arguments.
+*)
+val execute_with_typed_parameter :
+  ?logger:logger ->
+  Alpha_context.context ->
+  cached_script:Script_ir_translator.ex_script option ->
+  Script_ir_translator.unparsing_mode ->
   step_constants ->
-  ('a, 's, 'r, 'f) Script_typed_ir.kinstr ->
-  'a ->
-  's ->
-  ('r * 'f * context) tzresult Lwt.t
+  script:Script.t ->
+  entrypoint:Entrypoint.t ->
+  parameter_ty:('a, _) Script_typed_ir.ty ->
+  location:Script.location ->
+  parameter:'a ->
+  internal:bool ->
+  (execution_result * context) tzresult Lwt.t
 
 (** Internal interpretation loop
     ============================
@@ -171,4 +168,29 @@ module Internals : sig
     * Local_gas_counter.local_gas_counter)
     tzresult
     Lwt.t
+
+  val step_descr :
+    logger option ->
+    context ->
+    Script_typed_ir.step_constants ->
+    ('a, 's, 'r, 'f) Script_typed_ir.kdescr ->
+    'a ->
+    's ->
+    ('r * 'f * context) tzresult Lwt.t
+
+  (** [kstep logger ctxt step_constants kinstr accu stack] interprets the
+      script represented by [kinstr] under the context [ctxt]. This will
+      turn a stack whose topmost element is [accu] and remaining elements
+      [stack] into a new accumulator and a new stack. This function also
+      returns an updated context. If [logger] is given, [kstep] calls back
+      its functions at specific points of the execution. The execution is
+      parameterized by some [step_constants]. *)
+  val kstep :
+    logger option ->
+    context ->
+    step_constants ->
+    ('a, 's, 'r, 'f) Script_typed_ir.kinstr ->
+    'a ->
+    's ->
+    ('r * 'f * context) tzresult Lwt.t
 end

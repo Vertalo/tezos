@@ -10,6 +10,7 @@ __pycache__
 /_opam
 /_docker_build
 /_snoop
+/node_modules
 
 /test_results
 
@@ -29,8 +30,10 @@ __pycache__
 /tezos-codec
 /tezos-snoop
 /tezos-tps-evaluation
+/tezos-tps-evaluation-*
 /tezos-sc-rollup-node-*
 /tezos-sc-rollup-client-*
+/tezos-binaries
 
 /src/proto_*/parameters/*-parameters.json
 

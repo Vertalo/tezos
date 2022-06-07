@@ -3,6 +3,7 @@
 (* Open Source License                                                       *)
 (* Copyright (c) 2018 Nomadic Development. <contact@tezcore.com>             *)
 (* Copyright (c) 2021-2022 Nomadic Labs, <contact@nomadic-labs.com>          *)
+(* Copyright (c) 2022 TriliTech <contact@trili.tech>                         *)
 (*                                                                           *)
 (* Permission is hereby granted, free of charge, to any person obtaining a   *)
 (* copy of this software and associated documentation files (the "Software"),*)
@@ -240,7 +241,7 @@ module Mempool = struct
   end)
 
   type state = {
-    grandparent_level_start : Alpha_context.Timestamp.t option;
+    grandparent_level_start : Timestamp.t option;
     round_zero_duration : Period.t option;
     op_prechecked_managers : manager_op_info Signature.Public_key_hash.Map.t;
         (** All managers that are the source of manager operations
@@ -295,26 +296,25 @@ module Mempool = struct
         >>?= fun grandparent_round ->
         Alpha_context.Fitness.round_from_raw predecessor_fitness
         >>?= fun predecessor_round ->
-        Alpha_context.(
-          let round_durations = Constants.round_durations ctxt in
-          let round_zero_duration =
-            Round.round_duration round_durations Round.zero
-          in
-          Round.level_offset_of_round
-            round_durations
-            ~round:Round.(succ grandparent_round)
-          >>?= fun proposal_level_offset ->
-          Round.level_offset_of_round round_durations ~round:predecessor_round
-          >>?= fun proposal_round_offset ->
-          Period.(add proposal_level_offset proposal_round_offset)
-          >>?= fun proposal_offset ->
-          return
-            {
-              empty with
-              grandparent_level_start =
-                Some Timestamp.(predecessor_timestamp - proposal_offset);
-              round_zero_duration = Some round_zero_duration;
-            }))
+        let round_durations = Constants.round_durations ctxt in
+        let round_zero_duration =
+          Round.round_duration round_durations Round.zero
+        in
+        Round.level_offset_of_round
+          round_durations
+          ~round:Round.(succ grandparent_round)
+        >>?= fun proposal_level_offset ->
+        Round.level_offset_of_round round_durations ~round:predecessor_round
+        >>?= fun proposal_round_offset ->
+        Period.(add proposal_level_offset proposal_round_offset)
+        >>?= fun proposal_offset ->
+        return
+          {
+            empty with
+            grandparent_level_start =
+              Some Timestamp.(predecessor_timestamp - proposal_offset);
+            round_zero_duration = Some round_zero_duration;
+          })
     >|= Environment.wrap_tzresult
 
   let manager_prio p = `Low p
@@ -343,7 +343,7 @@ module Mempool = struct
     match !removed_oph_source with
     | None ->
         (* Not present anywhere in the filter state, because of invariants.
-           @see {!state} *)
+           See {!state} *)
         filter_state
     | Some source ->
         let prechecked_operations_count =
@@ -577,7 +577,7 @@ module Mempool = struct
   (** Returns the weight and resources consumption of an operation. The weight
       corresponds to the one implemented by the baker, to decide which operations
       to put in a block first (the code is largely duplicated).
-      @see {!Tezos_baking_alpha.Operation_selection.weight_manager} *)
+      See {!Tezos_baking_alpha.Operation_selection.weight_manager} *)
   let weight_and_resources_manager_operation ~validation_state ?size ~fee ~gas
       op =
     let hard_gas_limit_per_block =
@@ -771,7 +771,7 @@ module Mempool = struct
       (function Consensus_operation_in_far_future -> Some () | _ -> None)
       (fun () -> Consensus_operation_in_far_future)
 
-  (** {2} consensus operation filtering.
+  (** {2 consensus operation filtering}
 
      In Tenderbake, we increased a lot the number of consensus
       operations, therefore it seems necessary to be able to filter consensus
@@ -1463,8 +1463,20 @@ module View_helpers = struct
     in
     match operations with
     | [
-     Internal_operation
-       {operation = Transaction {destination; parameters; _}; _};
+     Script_typed_ir.Internal_operation
+       {
+         operation =
+           Transaction
+             {
+               transaction =
+                 {destination; parameters; entrypoint = _; amount = _};
+               parameters = _;
+               parameters_ty = _;
+               location = _;
+             };
+         source = _;
+         nonce = _;
+       };
     ]
       when Destination.equal destination (Contract callback) ->
         ok parameters
@@ -1497,10 +1509,23 @@ module RPC = struct
     let register0_fullctxt ~chunked s f =
       patched_services :=
         RPC_directory.register ~chunked !patched_services s (fun ctxt q i ->
-            Services_registration.rpc_init ctxt >>=? fun ctxt -> f ctxt q i)
+            Services_registration.rpc_init ctxt `Head_level >>=? fun ctxt ->
+            f ctxt q i)
 
     let register0 ~chunked s f =
       register0_fullctxt ~chunked s (fun {context; _} -> f context)
+
+    let register0_fullctxt_successor_level ~chunked s f =
+      patched_services :=
+        RPC_directory.register ~chunked !patched_services s (fun ctxt q i ->
+            let mode =
+              if q#successor_level then `Successor_level else `Head_level
+            in
+            Services_registration.rpc_init ctxt mode >>=? fun ctxt -> f ctxt q i)
+
+    let register0_successor_level ~chunked s f =
+      register0_fullctxt_successor_level ~chunked s (fun {context; _} ->
+          f context)
 
     let register0_noctxt ~chunked s f =
       patched_services :=
@@ -1509,7 +1534,8 @@ module RPC = struct
     let opt_register0_fullctxt ~chunked s f =
       patched_services :=
         RPC_directory.opt_register ~chunked !patched_services s (fun ctxt q i ->
-            Services_registration.rpc_init ctxt >>=? fun ctxt -> f ctxt q i)
+            Services_registration.rpc_init ctxt `Head_level >>=? fun ctxt ->
+            f ctxt q i)
 
     let opt_register0 ~chunked s f =
       opt_register0_fullctxt ~chunked s (fun {context; _} -> f context)
@@ -1521,7 +1547,8 @@ module RPC = struct
           !patched_services
           s
           (fun (ctxt, arg) q i ->
-            Services_registration.rpc_init ctxt >>=? fun ctxt -> f ctxt arg q i)
+            Services_registration.rpc_init ctxt `Head_level >>=? fun ctxt ->
+            f ctxt arg q i)
 
     let register1 ~chunked s f =
       register1_fullctxt ~chunked s (fun {context; _} x -> f context x)
@@ -1533,7 +1560,7 @@ module RPC = struct
           !patched_services
           s
           (fun ((ctxt, arg1), arg2) q i ->
-            Services_registration.rpc_init ctxt >>=? fun ctxt ->
+            Services_registration.rpc_init ctxt `Head_level >>=? fun ctxt ->
             f ctxt arg1 arg2 q i)
 
     let register2 ~chunked s f =
@@ -1603,7 +1630,7 @@ module RPC = struct
             (storage, operations, lazy_storage_diff))
           (obj3
              (req "storage" Script.expr_encoding)
-             (req "operations" (list Operation.internal_operation_encoding))
+             (req "operations" (list Apply_results.internal_contents_encoding))
              (opt "lazy_storage_diff" Lazy_storage.encoding))
 
       let trace_code_input_encoding = run_code_input_encoding
@@ -1623,7 +1650,7 @@ module RPC = struct
             (storage, operations, trace, lazy_storage_diff))
           (obj4
              (req "storage" Script.expr_encoding)
-             (req "operations" (list Operation.internal_operation_encoding))
+             (req "operations" (list Apply_results.internal_contents_encoding))
              (req "trace" trace_encoding)
              (opt "lazy_storage_diff" Lazy_storage.encoding))
 
@@ -1773,10 +1800,24 @@ module RPC = struct
           ~output:Apply_results.operation_data_and_metadata_encoding
           RPC_path.(path / "run_operation")
 
+      let simulate_query =
+        let open RPC_query in
+        query (fun successor_level ->
+            object
+              method successor_level = successor_level
+            end)
+        |+ flag
+             ~descr:
+               "If true, the simulation is done on the successor level of the \
+                current context."
+             "successor_level"
+             (fun t -> t#successor_level)
+        |> seal
+
       let simulate_operation =
         RPC_service.post_service
           ~description:"Simulate an operation"
-          ~query:RPC_query.empty
+          ~query:simulate_query
           ~input:
             (obj4
                (opt "blocks_before_activation" int32)
@@ -1785,6 +1826,19 @@ module RPC = struct
                (dft "latency" int16 default_operation_inclusion_latency))
           ~output:Apply_results.operation_data_and_metadata_encoding
           RPC_path.(path / "simulate_operation")
+
+      let simulate_tx_rollup_operation =
+        RPC_service.post_service
+          ~description:"Simulate a tx rollup operation"
+          ~query:RPC_query.empty
+          ~input:
+            (obj4
+               (opt "blocks_before_activation" int32)
+               (req "operation" Operation.encoding)
+               (req "chain_id" Chain_id.encoding)
+               (dft "latency" int16 default_operation_inclusion_latency))
+          ~output:Apply_results.operation_data_and_metadata_encoding
+          RPC_path.(path / "simulate_tx_rollup_operation")
 
       let entrypoint_type =
         RPC_service.post_service
@@ -1884,10 +1938,10 @@ module RPC = struct
           ~entrypoint
           ~parameter
           ~internal:true
-        >>=? fun ({ctxt; storage; lazy_storage_diff; operations}, _) ->
+        >>=? fun res ->
         logger.get_log () >|=? fun trace ->
         let trace = Option.value ~default:[] trace in
-        ({ctxt; storage; lazy_storage_diff; operations}, trace)
+        (res, trace)
     end
 
     let typecheck_data :
@@ -1927,42 +1981,13 @@ module RPC = struct
       open Michelson_v1_primitives
       open Script_typed_ir
 
-      let rec unparse_comparable_ty :
-          type a loc.
-          loc:loc -> a comparable_ty -> (loc, Script.prim) Micheline.node =
-       fun ~loc -> function
-        | Unit_key -> Prim (loc, T_unit, [], [])
-        | Never_key -> Prim (loc, T_never, [], [])
-        | Int_key -> Prim (loc, T_int, [], [])
-        | Nat_key -> Prim (loc, T_nat, [], [])
-        | Signature_key -> Prim (loc, T_signature, [], [])
-        | String_key -> Prim (loc, T_string, [], [])
-        | Bytes_key -> Prim (loc, T_bytes, [], [])
-        | Mutez_key -> Prim (loc, T_mutez, [], [])
-        | Bool_key -> Prim (loc, T_bool, [], [])
-        | Key_hash_key -> Prim (loc, T_key_hash, [], [])
-        | Key_key -> Prim (loc, T_key, [], [])
-        | Timestamp_key -> Prim (loc, T_timestamp, [], [])
-        | Address_key -> Prim (loc, T_address, [], [])
-        | Tx_rollup_l2_address_key -> Prim (loc, T_tx_rollup_l2_address, [], [])
-        | Chain_id_key -> Prim (loc, T_chain_id, [], [])
-        | Pair_key (l, r, _meta) ->
-            let tl = unparse_comparable_ty ~loc l in
-            let tr = unparse_comparable_ty ~loc r in
-            Prim (loc, T_pair, [tl; tr], [])
-        | Union_key (l, r, _meta) ->
-            let tl = unparse_comparable_ty ~loc l in
-            let tr = unparse_comparable_ty ~loc r in
-            Prim (loc, T_or, [tl; tr], [])
-        | Option_key (t, _meta) ->
-            Prim (loc, T_option, [unparse_comparable_ty ~loc t], [])
-
       let unparse_memo_size ~loc memo_size =
         let z = Alpha_context.Sapling.Memo_size.unparse_to_z memo_size in
         Int (loc, z)
 
       let rec unparse_ty :
-          type a loc. loc:loc -> a ty -> (loc, Script.prim) Micheline.node =
+          type a ac loc.
+          loc:loc -> (a, ac) ty -> (loc, Script.prim) Micheline.node =
        fun ~loc ty ->
         let return (name, args, annot) = Prim (loc, name, args, annot) in
         match ty with
@@ -1988,12 +2013,12 @@ module RPC = struct
         | Contract_t (ut, _meta) ->
             let t = unparse_ty ~loc ut in
             return (T_contract, [t], [])
-        | Pair_t (utl, utr, _meta) ->
+        | Pair_t (utl, utr, _meta, _) ->
             let annot = [] in
             let tl = unparse_ty ~loc utl in
             let tr = unparse_ty ~loc utr in
             return (T_pair, [tl; tr], annot)
-        | Union_t (utl, utr, _meta) ->
+        | Union_t (utl, utr, _meta, _) ->
             let annot = [] in
             let tl = unparse_ty ~loc utl in
             let tr = unparse_ty ~loc utr in
@@ -2002,7 +2027,7 @@ module RPC = struct
             let ta = unparse_ty ~loc uta in
             let tr = unparse_ty ~loc utr in
             return (T_lambda, [ta; tr], [])
-        | Option_t (ut, _meta) ->
+        | Option_t (ut, _meta, _) ->
             let annot = [] in
             let ut = unparse_ty ~loc ut in
             return (T_option, [ut], annot)
@@ -2010,22 +2035,27 @@ module RPC = struct
             let t = unparse_ty ~loc ut in
             return (T_list, [t], [])
         | Ticket_t (ut, _meta) ->
-            let t = unparse_comparable_ty ~loc ut in
+            let t = unparse_ty ~loc ut in
             return (T_ticket, [t], [])
         | Set_t (ut, _meta) ->
-            let t = unparse_comparable_ty ~loc ut in
+            let t = unparse_ty ~loc ut in
             return (T_set, [t], [])
         | Map_t (uta, utr, _meta) ->
-            let ta = unparse_comparable_ty ~loc uta in
+            let ta = unparse_ty ~loc uta in
             let tr = unparse_ty ~loc utr in
             return (T_map, [ta; tr], [])
         | Big_map_t (uta, utr, _meta) ->
-            let ta = unparse_comparable_ty ~loc uta in
+            let ta = unparse_ty ~loc uta in
             let tr = unparse_ty ~loc utr in
             return (T_big_map, [ta; tr], [])
         | Sapling_transaction_t memo_size ->
             return
               (T_sapling_transaction, [unparse_memo_size ~loc memo_size], [])
+        | Sapling_transaction_deprecated_t memo_size ->
+            return
+              ( T_sapling_transaction_deprecated,
+                [unparse_memo_size ~loc memo_size],
+                [] )
         | Sapling_state_t memo_size ->
             return (T_sapling_state, [unparse_memo_size ~loc memo_size], [])
         | Chest_t -> return (T_chest, [], [])
@@ -2105,7 +2135,8 @@ module RPC = struct
        time of the operation.
 
     *)
-    let simulate_operation_service ctxt ()
+    let simulate_operation_service ctxt
+        (_simulate_query : < successor_level : bool >)
         (blocks_before_activation, op, chain_id, time_in_blocks) =
       Cache.Admin.future_cache_expectation
         ctxt
@@ -2179,14 +2210,13 @@ module RPC = struct
             ->
             Gas_monad.run ctxt
             @@ Script_ir_translator.find_entrypoint
-                 ~error_details:Informative
+                 ~error_details:(Informative ())
                  arg_type
                  entrypoints
                  entrypoint
-            >>? fun (r, ctxt) ->
-            r >>? fun (_f, Ex_ty ty) ->
-            unparse_ty ~loc:() ctxt ty >|? fun (ty_node, _) ->
-            Micheline.strip_locations ty_node )
+            >>? fun (r, _ctxt) ->
+            r >|? fun (Ex_ty_cstr {original_type_expr; _}) ->
+            Micheline.strip_locations original_type_expr )
       in
       Registration.register0
         ~chunked:true
@@ -2247,12 +2277,17 @@ module RPC = struct
             ~parameter
             ~internal:true
           >|=? fun ( {
+                       script = _;
+                       code_size = _;
                        Script_interpreter.storage;
                        operations;
                        lazy_storage_diff;
-                       _;
+                       ticket_diffs = _;
                      },
-                     _ ) -> (storage, operations, lazy_storage_diff)) ;
+                     _ ) ->
+          ( storage,
+            Apply_results.contents_of_packed_internal_operations operations,
+            lazy_storage_diff )) ;
       Registration.register0
         ~chunked:true
         S.trace_code
@@ -2312,13 +2347,20 @@ module RPC = struct
             ~script:{storage; code}
             ~entrypoint
             ~parameter
-          >|=? fun ( {
-                       Script_interpreter.storage;
-                       operations;
-                       lazy_storage_diff;
-                       _;
-                     },
-                     trace ) -> (storage, operations, trace, lazy_storage_diff)) ;
+          >|=? fun ( ( {
+                         script = _;
+                         code_size = _;
+                         Script_interpreter.storage;
+                         operations;
+                         lazy_storage_diff;
+                         ticket_diffs = _;
+                       },
+                       _ctxt ),
+                     trace ) ->
+          ( storage,
+            Apply_results.contents_of_packed_internal_operations operations,
+            trace,
+            lazy_storage_diff )) ;
       Registration.register0
         ~chunked:true
         S.run_view
@@ -2339,7 +2381,7 @@ module RPC = struct
           Contract.get_script ctxt contract >>=? fun (ctxt, script_opt) ->
           Option.fold
             ~some:ok
-            ~none:(Error_monad.error View_helpers.Viewed_contract_has_no_script)
+            ~none:(error View_helpers.Viewed_contract_has_no_script)
             script_opt
           >>?= fun script ->
           Script_repr.(force_decode script.code) >>?= fun decoded_script ->
@@ -2404,7 +2446,15 @@ module RPC = struct
             ~entrypoint
             ~parameter
             ~internal:true
-          >>=? fun ({Script_interpreter.operations; _}, (_, _)) ->
+          >>=? fun ( {
+                       Script_interpreter.operations;
+                       script = _;
+                       code_size = _;
+                       storage = _;
+                       lazy_storage_diff = _;
+                       ticket_diffs = _;
+                     },
+                     _ctxt ) ->
           View_helpers.extract_parameter_from_operations
             entrypoint
             operations
@@ -2436,14 +2486,15 @@ module RPC = struct
           let code = Script.lazy_expr expr in
           Script_ir_translator.parse_code ~legacy ctxt ~code
           >>=? fun ( Ex_code
-                       {
-                         code;
-                         arg_type;
-                         storage_type;
-                         views;
-                         entrypoints;
-                         code_size;
-                       },
+                       (Code
+                         {
+                           code;
+                           arg_type;
+                           storage_type;
+                           views;
+                           entrypoints;
+                           code_size;
+                         }),
                      ctxt ) ->
           Script_ir_translator.parse_data
             ~legacy
@@ -2454,15 +2505,16 @@ module RPC = struct
           >>=? fun (storage, _) ->
           let script =
             Script_ir_translator.Ex_script
-              {
-                code;
-                arg_type;
-                storage_type;
-                views;
-                entrypoints;
-                code_size;
-                storage;
-              }
+              (Script
+                 {
+                   code;
+                   arg_type;
+                   storage_type;
+                   views;
+                   entrypoints;
+                   code_size;
+                   storage;
+                 })
           in
           let (size, cost) = Script_ir_translator.script_size script in
           Gas.consume ctxt cost >>?= fun _ctxt -> return @@ size) ;
@@ -2538,7 +2590,7 @@ module RPC = struct
           let normalized = Unparse_types.unparse_ty ~loc:() typ in
           return @@ Micheline.strip_locations normalized) ;
       Registration.register0 ~chunked:true S.run_operation run_operation_service ;
-      Registration.register0
+      Registration.register0_successor_level
         ~chunked:true
         S.simulate_operation
         simulate_operation_service ;
@@ -2557,14 +2609,18 @@ module RPC = struct
           parse_toplevel ~legacy ctxt expr >>=? fun ({arg_type; _}, ctxt) ->
           Lwt.return
             ( parse_parameter_ty_and_entrypoints ctxt ~legacy arg_type
-            >>? fun (Ex_parameter_ty_and_entrypoints {arg_type; entrypoints}, _)
+            >|? fun (Ex_parameter_ty_and_entrypoints {arg_type; entrypoints}, _)
               ->
-              Script_ir_translator.list_entrypoints ctxt arg_type entrypoints
-              >|? fun (unreachable_entrypoint, map) ->
+              let (unreachable_entrypoint, map) =
+                Script_ir_translator.list_entrypoints_uncarbonated
+                  arg_type
+                  entrypoints
+              in
               ( unreachable_entrypoint,
                 Entrypoint.Map.fold
-                  (fun entry (_, ty) acc ->
-                    (Entrypoint.to_string entry, Micheline.strip_locations ty)
+                  (fun entry (_ex_ty, original_type_expr) acc ->
+                    ( Entrypoint.to_string entry,
+                      Micheline.strip_locations original_type_expr )
                     :: acc)
                   map
                   [] ) ))
@@ -2676,13 +2732,15 @@ module RPC = struct
     let run_operation ~op ~chain_id ctxt block =
       RPC_context.make_call0 S.run_operation ctxt block () (op, chain_id)
 
-    let simulate_operation ~op ~chain_id ~latency ?blocks_before_activation ctxt
-        block =
+    let simulate_operation ~op ~chain_id ~latency ?(successor_level = false)
+        ?blocks_before_activation ctxt block =
       RPC_context.make_call0
         S.simulate_operation
         ctxt
         block
-        ()
+        (object
+           method successor_level = successor_level
+        end)
         (blocks_before_activation, op, chain_id, latency)
 
     let entrypoint_type ~script ~entrypoint ctxt block =
@@ -2715,7 +2773,10 @@ module RPC = struct
           ~description:
             "Access the script of the contract and normalize it using the \
              requested unparsing mode."
-          ~input:(obj1 (req "unparsing_mode" unparsing_mode_encoding))
+          ~input:
+            (obj2
+               (req "unparsing_mode" unparsing_mode_encoding)
+               (dft "normalize_types" bool false))
           ~query:RPC_query.empty
           ~output:(option Script.encoding)
           RPC_path.(path /: Contract.rpc_arg / "script" / "normalized")
@@ -2738,32 +2799,27 @@ module RPC = struct
                 ~legacy:true
                 ~allow_forged_in_storage:true
                 script
-              >>=? fun (Ex_script script, ctxt) ->
-              unparse_script ctxt unparsing_mode script
-              >>=? fun (script, ctxt) ->
-              Script.force_decode_in_context
-                ~consume_deserialization_gas:When_needed
-                ctxt
-                script.storage
-              >>?= fun (storage, _ctxt) -> return_some storage) ;
+              >>=? fun (Ex_script (Script {storage; storage_type; _}), ctxt) ->
+              unparse_data ctxt unparsing_mode storage_type storage
+              >|=? fun (storage, _ctxt) ->
+              Some (Micheline.strip_locations storage)) ;
       (* Patched RPC: get_script *)
       Registration.register1
         ~chunked:true
         S.get_script_normalized
-        (fun ctxt contract () unparsing_mode ->
+        (fun ctxt contract () (unparsing_mode, normalize_types) ->
           Contract.get_script ctxt contract >>=? fun (ctxt, script) ->
           match script with
           | None -> return_none
           | Some script ->
               let ctxt = Gas.set_unlimited ctxt in
-              let open Script_ir_translator in
-              parse_script
+              Script_ir_translator.parse_and_unparse_script_unaccounted
                 ctxt
                 ~legacy:true
                 ~allow_forged_in_storage:true
+                unparsing_mode
+                ~normalize_types
                 script
-              >>=? fun (Ex_script script, ctxt) ->
-              unparse_script ctxt unparsing_mode script
               >>=? fun (script, _ctxt) -> return_some script)
 
     let get_storage_normalized ctxt block ~contract ~unparsing_mode =
@@ -2775,14 +2831,15 @@ module RPC = struct
         ()
         unparsing_mode
 
-    let get_script_normalized ctxt block ~contract ~unparsing_mode =
+    let get_script_normalized ctxt block ~contract ~unparsing_mode
+        ~normalize_types =
       RPC_context.make_call1
         S.get_script_normalized
         ctxt
         block
         contract
         ()
-        unparsing_mode
+        (unparsing_mode, normalize_types)
   end
 
   module Big_map = struct
@@ -2850,9 +2907,8 @@ module RPC = struct
     open Data_encoding
 
     module S = struct
-      let path =
-        (RPC_path.(open_root / "context" / "sc_rollup")
-          : RPC_context.t RPC_path.context)
+      let path : RPC_context.t RPC_path.context =
+        RPC_path.(open_root / "context" / "sc_rollup")
 
       let kind =
         RPC_service.get_service
@@ -2867,6 +2923,20 @@ module RPC = struct
           ~query:RPC_query.empty
           ~output:Sc_rollup.Inbox.encoding
           RPC_path.(path /: Sc_rollup.Address.rpc_arg / "inbox")
+
+      let initial_level =
+        RPC_service.get_service
+          ~description:"Initial level for a smart-contract rollup"
+          ~query:RPC_query.empty
+          ~output:Raw_level.encoding
+          RPC_path.(path /: Sc_rollup.Address.rpc_arg / "initial_level")
+
+      let root =
+        RPC_service.get_service
+          ~description:"List of all originated smart contract rollups"
+          ~query:RPC_query.empty
+          ~output:(Data_encoding.list Sc_rollup.Address.encoding)
+          path
     end
 
     let kind ctxt block sc_rollup_address =
@@ -2884,9 +2954,26 @@ module RPC = struct
       Registration.register1 ~chunked:true S.kind @@ fun ctxt address () () ->
       Alpha_context.Sc_rollup.kind ctxt address
 
+    (* TODO: https://gitlab.com/tezos/tezos/-/issues/2688 *)
+    let register_initial_level () =
+      Registration.register1 ~chunked:true S.initial_level
+      @@ fun ctxt address () () ->
+      Alpha_context.Sc_rollup.initial_level ctxt address
+
+    let register_root () =
+      Registration.register0 ~chunked:true S.root (fun context () () ->
+          Sc_rollup.list context)
+
     let register () =
       register_kind () ;
-      register_inbox ()
+      register_inbox () ;
+      register_initial_level () ;
+      register_root ()
+
+    let list ctxt block = RPC_context.make_call0 S.root ctxt block () ()
+
+    let initial_level ctxt block sc_rollup_address =
+      RPC_context.make_call1 S.initial_level ctxt block sc_rollup_address () ()
   end
 
   module Forge = struct
@@ -2919,9 +3006,106 @@ module RPC = struct
                   "proof_of_work_nonce"
                   (Fixed.bytes Alpha_context.Constants.proof_of_work_nonce_size)
                   empty_proof_of_work_nonce)
-               (dft "liquidity_baking_escape_vote" bool false))
+               Liquidity_baking.(
+                 dft
+                   "liquidity_baking_toggle_vote"
+                   liquidity_baking_toggle_vote_encoding
+                   LB_pass))
           ~output:(obj1 (req "protocol_data" bytes))
           RPC_path.(path / "protocol_data")
+
+      module Tx_rollup = struct
+        open Data_encoding
+
+        let path = RPC_path.(path / "tx_rollup")
+
+        module Inbox = struct
+          let path = RPC_path.(path / "inbox")
+
+          let message_hash =
+            RPC_service.post_service
+              ~description:"Compute the hash of a message"
+              ~query:RPC_query.empty
+              ~input:(obj1 (req "message" Tx_rollup_message.encoding))
+              ~output:(obj1 (req "hash" Tx_rollup_message_hash.encoding))
+              RPC_path.(path / "message_hash")
+
+          let merkle_tree_hash =
+            RPC_service.post_service
+              ~description:"Compute the merkle tree hash of an inbox"
+              ~query:RPC_query.empty
+              ~input:
+                (obj1
+                   (req "message_hashes" (list Tx_rollup_message_hash.encoding)))
+              ~output:(obj1 (req "hash" Tx_rollup_inbox.Merkle.root_encoding))
+              RPC_path.(path / "merkle_tree_hash")
+
+          let merkle_tree_path =
+            RPC_service.post_service
+              ~description:"Compute a path of an inbox message in a merkle tree"
+              ~query:RPC_query.empty
+              ~input:
+                (obj2
+                   (req "message_hashes" (list Tx_rollup_message_hash.encoding))
+                   (req "position" int16))
+              ~output:(obj1 (req "path" Tx_rollup_inbox.Merkle.path_encoding))
+              RPC_path.(path / "merkle_tree_path")
+        end
+
+        module Commitment = struct
+          let path = RPC_path.(path / "commitment")
+
+          let merkle_tree_hash =
+            RPC_service.post_service
+              ~description:"Compute the merkle tree hash of a commitment"
+              ~query:RPC_query.empty
+              ~input:
+                (obj1
+                   (req
+                      "message_result_hashes"
+                      (list Tx_rollup_message_result_hash.encoding)))
+              ~output:
+                (obj1 (req "hash" Tx_rollup_commitment.Merkle_hash.encoding))
+              RPC_path.(path / "merkle_tree_hash")
+
+          let merkle_tree_path =
+            RPC_service.post_service
+              ~description:
+                "Compute a path of a message result hash in the commitment \
+                 merkle tree"
+              ~query:RPC_query.empty
+              ~input:
+                (obj2
+                   (req
+                      "message_result_hashes"
+                      (list Tx_rollup_message_result_hash.encoding))
+                   (req "position" int16))
+              ~output:
+                (obj1 (req "path" Tx_rollup_commitment.Merkle.path_encoding))
+              RPC_path.(path / "merkle_tree_path")
+
+          let message_result_hash =
+            RPC_service.post_service
+              ~description:"Compute the message result hash"
+              ~query:RPC_query.empty
+              ~input:Tx_rollup_message_result.encoding
+              ~output:(obj1 (req "hash" Tx_rollup_message_result_hash.encoding))
+              RPC_path.(path / "message_result_hash")
+        end
+
+        module Withdraw = struct
+          let path = RPC_path.(path / "withdraw")
+
+          let withdraw_list_hash =
+            RPC_service.post_service
+              ~description:"Compute the hash of a withdraw list"
+              ~query:RPC_query.empty
+              ~input:
+                (obj1 (req "withdraw_list" (list Tx_rollup_withdraw.encoding)))
+              ~output:(obj1 (req "hash" Tx_rollup_withdraw_list_hash.encoding))
+              RPC_path.(path / "withdraw_list_hash")
+        end
+      end
     end
 
     let register () =
@@ -2942,7 +3126,7 @@ module RPC = struct
             payload_round,
             seed_nonce_hash,
             proof_of_work_nonce,
-            liquidity_baking_escape_vote )
+            liquidity_baking_toggle_vote )
         ->
           return
             (Data_encoding.Binary.to_bytes_exn
@@ -2952,8 +3136,49 @@ module RPC = struct
                  payload_round;
                  seed_nonce_hash;
                  proof_of_work_nonce;
-                 liquidity_baking_escape_vote;
-               }))
+                 liquidity_baking_toggle_vote;
+               })) ;
+      Registration.register0_noctxt
+        ~chunked:true
+        S.Tx_rollup.Inbox.message_hash
+        (fun () message ->
+          return (Tx_rollup_message_hash.hash_uncarbonated message)) ;
+      Registration.register0_noctxt
+        ~chunked:true
+        S.Tx_rollup.Inbox.merkle_tree_hash
+        (fun () message_hashes ->
+          return (Tx_rollup_inbox.Merkle.merklize_list message_hashes)) ;
+      Registration.register0_noctxt
+        ~chunked:true
+        S.Tx_rollup.Inbox.merkle_tree_path
+        (fun () (message_hashes, position) ->
+          Lwt.return
+            (Tx_rollup_inbox.Merkle.compute_path message_hashes position)) ;
+      Registration.register0_noctxt
+        ~chunked:true
+        S.Tx_rollup.Commitment.merkle_tree_hash
+        (fun () message_result_hashes ->
+          let open Tx_rollup_commitment.Merkle in
+          let tree = List.fold_left snoc nil message_result_hashes in
+          return (root tree)) ;
+      Registration.register0_noctxt
+        ~chunked:true
+        S.Tx_rollup.Commitment.merkle_tree_path
+        (fun () (message_result_hashes, position) ->
+          let open Tx_rollup_commitment.Merkle in
+          let tree = List.fold_left snoc nil message_result_hashes in
+          Lwt.return (compute_path tree position)) ;
+      Registration.register0_noctxt
+        ~chunked:true
+        S.Tx_rollup.Commitment.message_result_hash
+        (fun () message_result ->
+          return
+            (Tx_rollup_message_result_hash.hash_uncarbonated message_result)) ;
+      Registration.register0_noctxt
+        ~chunked:true
+        S.Tx_rollup.Withdraw.withdraw_list_hash
+        (fun () withdrawals ->
+          return (Tx_rollup_withdraw_list_hash.hash_uncarbonated withdrawals))
 
     module Manager = struct
       let[@coq_axiom_with_reason "cast on e"] operations ctxt block ~branch
@@ -3045,13 +3270,7 @@ module RPC = struct
           ~storage_limit
           [
             Manager
-              (Origination
-                 {
-                   delegate = delegatePubKey;
-                   script;
-                   credit = balance;
-                   preorigination = None;
-                 });
+              (Origination {delegate = delegatePubKey; script; credit = balance});
           ]
 
       let delegation ctxt block ~branch ~source ?sourcePubKey ~counter ~fee
@@ -3107,7 +3326,7 @@ module RPC = struct
     let protocol_data ctxt block ?(payload_hash = Block_payload_hash.zero)
         ?(payload_round = Round.zero) ?seed_nonce_hash
         ?(proof_of_work_nonce = empty_proof_of_work_nonce)
-        ~liquidity_baking_escape_vote () =
+        ~liquidity_baking_toggle_vote () =
       RPC_context.make_call0
         S.protocol_data
         ctxt
@@ -3117,7 +3336,7 @@ module RPC = struct
           payload_round,
           seed_nonce_hash,
           proof_of_work_nonce,
-          liquidity_baking_escape_vote )
+          liquidity_baking_toggle_vote )
   end
 
   module Parse = struct

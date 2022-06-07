@@ -124,7 +124,7 @@ module Dune : sig
 
       - [alias_deps] is a list of target aliases to build before this rule.
         They are added to the [deps] stanza in [alias] stanzas
-        (resulting in [(deps (alias ...) ...)].
+        (resulting in [(deps (alias ...) ...)]).
 
       - [deps_dune] can be used to specify the arguments of the [deps] stanza
         directly as an s-expression instead.
@@ -417,6 +417,26 @@ val if_some : target option -> target
     and to [no_target] if [condition] is [false]. *)
 val if_ : bool -> target -> target
 
+module Npm : sig
+  (** Npm package description
+
+     An npm package can be added as a dependency to an OCaml
+     library. For example, to get the wasm equivalent of a C library
+     when targeting JavaScript. *)
+
+  (** Npm package description *)
+  type t
+
+  (** Make a npm package.
+
+    Usage: [Npm.make package_name version]
+
+  - [package_name] is the name of the npm package.
+  - [version]: version constraint used by npm when installing dependencies.
+  *)
+  val make : string -> Version.constraints -> t
+end
+
 (** Preprocessors. *)
 type preprocessor
 
@@ -425,6 +445,15 @@ type preprocessor
     [pps ?args target] becomes a [(preprocess (pps target args))] stanza in the [dune] file.
     The target's package is also added as a dependency in the [.opam] file. *)
 val pps : ?args:string list -> target -> preprocessor
+
+(** Inline_tests backend.
+
+    Can be used when declaring a library to enable inline_tests with the given backend.
+*)
+type inline_tests
+
+(** Declare an inline_tests backend. *)
+val inline_tests_backend : target -> inline_tests
 
 (** Functions that build internal targets.
 
@@ -450,10 +479,6 @@ val pps : ?args:string list -> target -> preprocessor
     - [conflicts]: a list of target; all of their packages will be put in the
       [conflicts] section of the [.opam] file.
 
-    - [dep_files]: a list of files to add as dependencies using [(deps (file ...))]
-      in the [dune] file. A typical use is if you generate code: this tells [dune]
-      to make those files available to your generator.
-
     - [deps]: a list of targets to add as dependencies using [(libraries)]
       in the [dune] file.
 
@@ -462,8 +487,8 @@ val pps : ?args:string list -> target -> preprocessor
 
     - [foreign_stubs]: specifies a [(foreign_stubs)] stanza for the [dune] target.
 
-    - [inline_tests]: if [true], add [(inline_tests)] to the [dune] target.
-      This does NOT add [ppx_inline_test] to [preprocess].
+    - [inline_tests]: specifies an inline_tests backend. Can only be used when constructing a library.
+      If used, will add [(inline_tests)] and the corresponding preprocessor in the dune stanza.
 
     - [js_compatible]: whether the target can be compiled to JavaScript.
       Default value for [js_compatible] is
@@ -493,8 +518,7 @@ val pps : ?args:string list -> target -> preprocessor
 
     - [modules_without_implementation]: list of modules without implementation to include in this target.
 
-    - [node_wrapper_flags]: flags to add to the [node_wrapper] executable
-      command in [runtest_js] aliases. Only used for test and executable test targets.
+    - [npm]: npm dependencies used when targeting JavaScript.
 
     - [nopervasives]: if [true], add [-nopervasives] to the list of flags to
       be passed to the OCaml compiler (in the [(flags ...)] stanza).
@@ -547,6 +571,8 @@ val pps : ?args:string list -> target -> preprocessor
 
     - [synopsis]: short description for the [.opam] file.
 
+    - [description]: long description for the [.opam] file.
+
     - [warnings]: the argument passed to the -w flag when building.
 
     - [wrapped]: if [false], add the [(wrapped false)] stanza in the [dune] file.
@@ -559,11 +585,10 @@ type 'a maker =
   ?bisect_ppx:bool ->
   ?c_library_flags:string list ->
   ?conflicts:target list ->
-  ?dep_files:string list ->
   ?deps:target list ->
   ?dune:Dune.s_expr ->
   ?foreign_stubs:Dune.foreign_stubs ->
-  ?inline_tests:bool ->
+  ?inline_tests:inline_tests ->
   ?js_compatible:bool ->
   ?js_of_ocaml:Dune.s_expr ->
   ?documentation:Dune.s_expr ->
@@ -571,7 +596,7 @@ type 'a maker =
   ?modes:Dune.mode list ->
   ?modules:string list ->
   ?modules_without_implementation:string list ->
-  ?node_wrapper_flags:string list ->
+  ?npm_deps:Npm.t list ->
   ?nopervasives:bool ->
   ?nostdlib:bool ->
   ?ocaml:Version.constraints ->
@@ -586,6 +611,7 @@ type 'a maker =
   ?static:bool ->
   ?static_cclibs:string list ->
   ?synopsis:string ->
+  ?description:string ->
   ?time_measurement_ppx:bool ->
   ?warnings:string ->
   ?wrapped:bool ->
@@ -614,7 +640,7 @@ val public_exe : ?internal_name:string -> string maker
     public names. If not given, the list of internal names is derived from the
     list of names as for [public_lib].
 
-    @raise [Invalid_arg] if the list of names is empty or if the length of
+    @raise Invalid_arg if the list of names is empty or if the length of
     [internal_names] differs from the length of the list of public names. *)
 val public_exes : ?internal_names:string list -> string list maker
 
@@ -635,22 +661,18 @@ val private_exes : string list maker
 
 (** Register and return an internal test.
 
-    Since tests are private, they have no public name: the ['a] argument of [maker]
-    is the internal name. *)
-val test : string maker
+    - [runtest]: if true, setup runtest aliases for the given
+      test. If unspecified, [runtest] is set true.
+
+    - [dep_files]: a list of files to add as dependencies using [(deps (file ...))]
+      in the [runtest] alias.
+
+    Since tests are private, they have no public name: the ['a]
+    argument of [maker] is the internal name. *)
+val test : ?dep_files:string list -> ?runtest:bool -> string maker
 
 (** Same as {!test} but with several names, to define multiple tests at once. *)
-val tests : string list maker
-
-(** Register and return an internal executable that is only used for tests.
-
-    Same as {!private_exe} but the dependencies are only required to run tests:
-    in the [.opam] file, they are marked [with-test] (unless they are also needed
-    by non-test code). *)
-val test_exe : string maker
-
-(** Same as {!test_exe} but with several names, to define multiple tests at once. *)
-val test_exes : string list maker
+val tests : ?dep_files:string list -> ?runtest:bool -> string list maker
 
 (** Make an external vendored library, for use in internal target dependencies.
 
@@ -659,13 +681,12 @@ val test_exes : string list maker
     [js_compatible]: whether the library can be compiled to JavaScript.
     Default value for [js_compatible] is false.
 
-    [node_wrapper_flags]: flags to add to the [node_wrapper] executable
-    command in [runtest_js] aliases. Only used for test and executable test targets.
+    [npm_deps]: npm dependencies used when targeting JavaScript.
  *)
 val vendored_lib :
   ?main_module:string ->
   ?js_compatible:bool ->
-  ?node_wrapper_flags:string list ->
+  ?npm_deps:Npm.t list ->
   string ->
   target
 
@@ -681,14 +702,13 @@ val vendored_lib :
     [js_compatible]: whether the library can be compiled to JavaScript.
     Default value for [js_compatible] is false.
 
-    [node_wrapper_flags]: flags to add to the [node_wrapper] executable
-    command in [runtest_js] aliases. Only used for test and executable test targets.
+    [npm]: npm dependencies used when targeting JavaScript.
   *)
 val external_lib :
   ?main_module:string ->
   ?opam:string ->
   ?js_compatible:bool ->
-  ?node_wrapper_flags:string list ->
+  ?npm_deps:Npm.t list ->
   string ->
   Version.constraints ->
   target
@@ -707,22 +727,24 @@ val external_lib :
     [js_compatible]: whether the library can be compiled to JavaScript.
     Default value for [js_compatible] is false.
 
-    [node_wrapper_flags]: flags to add to the [node_wrapper] executable
-    command in [runtest_js] aliases. Only used for test and executable test targets.
+    [npm_deps]: npm dependencies used when targeting JavaScript.
 
-    @raise [Invalid_arg] if [main_lib] was not built with [external_lib]. *)
+    @raise Invalid_arg if [main_lib] was not built with [external_lib]. *)
 val external_sublib :
   ?main_module:string ->
   ?js_compatible:bool ->
-  ?node_wrapper_flags:string list ->
+  ?npm_deps:Npm.t list ->
   target ->
   string ->
   target
 
 (** Make an external library that is to only appear in [.opam] dependencies.
 
-    This avoids using [~opam_only_deps] each time you declare this dependency. *)
-val opam_only : string -> Version.constraints -> target
+    This avoids using [~opam_only_deps] each time you declare this dependency.
+
+    [can_vendor] specifies whether opam-monorepo should vendor this dependency, defaults
+    to [true]. *)
+val opam_only : ?can_vendor:bool -> string -> Version.constraints -> target
 
 (** Make an optional dependency with a source file to be selected depending on presence.
 
@@ -798,6 +820,11 @@ val optional : target -> target
     Can only be used on internal libraries and on external or vendored
     libraries for which a [main_module] was specified. *)
 val open_ : ?m:string -> target -> target
+
+(** Same as [open_], but only open if a condition holds.
+
+    Example: [tezos_base |> open_if protocol_is_recent_enough] *)
+val open_if : ?m:string -> bool -> target -> target
 
 (** Get a name for a given target, to display in errors.
 

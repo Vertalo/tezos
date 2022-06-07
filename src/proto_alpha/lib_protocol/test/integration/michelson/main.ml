@@ -46,9 +46,12 @@ let () =
       ("ticket lazy storage diff", Test_ticket_lazy_storage_diff.tests);
       ("ticket operations diff", Test_ticket_operations_diff.tests);
       ("ticket accounting", Test_ticket_accounting.tests);
+      ("ticket balance", Test_ticket_balance.tests);
+      ("ticket manager", Test_ticket_manager.tests);
       ("timelock", Test_timelock.tests);
       ("typechecking", Test_typechecking.tests);
       ("script cache", Test_script_cache.tests);
       ("block time instructions", Test_block_time_instructions.tests);
+      ("annotations", Test_annotations.tests);
     ]
   |> Lwt_main.run

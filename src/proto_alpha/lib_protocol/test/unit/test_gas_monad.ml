@@ -38,7 +38,7 @@ module GM = Gas_monad
 let ten_milligas = Gas.fp_of_milligas_int 10
 
 let new_context ~limit =
-  Context.init 1 >>=? fun (b, _contracts) ->
+  Context.init1 () >>=? fun (b, _contract) ->
   Incremental.begin_construction b >|=? fun inc ->
   let state = Incremental.validation_state inc in
   Gas.set_limit state.ctxt limit
@@ -54,7 +54,7 @@ let assert_equal_gas ~loc g1 g2 =
 let assert_inner_errors ~loc ctxt gas_monad ~errors ~remaining_gas =
   match GM.run ctxt gas_monad with
   | Ok (Error e, ctxt) ->
-      let open Lwt_tzresult_syntax in
+      let open Lwt_result_syntax in
       let* () =
         Assert.assert_equal_list
           ~loc
@@ -73,7 +73,7 @@ let assert_inner_errors ~loc ctxt gas_monad ~errors ~remaining_gas =
 let assert_success ~loc ctxt gas_monad ~result ~remaining_gas =
   match GM.run ctxt gas_monad with
   | Ok (Ok x, ctxt) ->
-      let open Lwt_tzresult_syntax in
+      let open Lwt_result_syntax in
       let* () = Assert.equal_int ~loc x result in
       assert_equal_gas
         ~loc

@@ -34,11 +34,9 @@
     Invariant: [total_amount] is the sum of the amounts in [destinations]. *)
 type ticket_token_diff = private {
   ticket_token : Ticket_token.ex_token;
-  total_amount : Alpha_context.Script_int.n Alpha_context.Script_int.num;
+  total_amount : Script_int.n Script_int.num;
   destinations :
-    (Alpha_context.Contract.t
-    * Alpha_context.Script_int.n Alpha_context.Script_int.num)
-    list;
+    (Alpha_context.Destination.t * Script_int.n Script_int.num) list;
 }
 
 (** [ticket_diffs_of_operations ctxt ops] returns a list of ticket-tokens diffs
@@ -48,5 +46,5 @@ type ticket_token_diff = private {
     tickets. *)
 val ticket_diffs_of_operations :
   Alpha_context.context ->
-  Alpha_context.packed_internal_operation list ->
+  Script_typed_ir.packed_internal_operation list ->
   (ticket_token_diff list * Alpha_context.context) tzresult Lwt.t

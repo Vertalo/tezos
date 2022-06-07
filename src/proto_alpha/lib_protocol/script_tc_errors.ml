@@ -74,6 +74,8 @@ type error += Tx_rollup_bad_deposit_parameter of Script.location * Script.expr
 
 type error += Tx_rollup_invalid_ticket_amount of Z.t
 
+type error += Tx_rollup_addresses_disabled of Script.location
+
 (* Instruction typing errors *)
 type error += Fail_not_in_tail_position of Script.location
 
@@ -157,9 +159,7 @@ type error += Comparable_type_expected : Script.location * Script.expr -> error
 type error += Inconsistent_type_sizes : int * int -> error
 
 type error +=
-  | Inconsistent_types :
-      Script.location option * Script.expr * Script.expr
-      -> error
+  | Inconsistent_types : Script.location * Script.expr * Script.expr -> error
 
 type error +=
   | Inconsistent_memo_sizes : Sapling.Memo_size.t * Sapling.Memo_size.t -> error
@@ -206,6 +206,6 @@ the error will be ignored later. For example, when types are compared during
 the interpretation of the [CONTRACT] instruction any error will lead to
 returning [None] but the content of the error will be ignored. *)
 
-type _ error_details =
-  | Informative : error trace error_details
-  | Fast : inconsistent_types_fast_error error_details
+type (_, _) error_details =
+  | Informative : 'error_context -> ('error_context, error trace) error_details
+  | Fast : (_, inconsistent_types_fast_error) error_details

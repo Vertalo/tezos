@@ -35,6 +35,8 @@ sequence:
 * 009 Florence
 * 010 Granada
 * 011 Hangzhou
+* 012 Ithaca
+* 013 Jakarta
 * ...
 
 Due to the evolving nature of the in-use protocols, the above absolute protocol

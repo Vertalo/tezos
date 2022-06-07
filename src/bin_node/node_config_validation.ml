@@ -213,14 +213,13 @@ let invalid_pow =
          "p2p.expected-proof-of-work")
     ("proof-of-work", Data_encoding.float)
 
-let validate_expected_pow (config : Node_config_file.t) : t tzresult Lwt.t =
-  let t =
-    unless
-      (0. <= config.p2p.expected_pow && config.p2p.expected_pow <= 256.)
-      ~event:invalid_pow
-      ~payload:config.p2p.expected_pow
-  in
-  return t
+let validate_expected_pow (config : Node_config_file.t) :
+    (t, 'error) result Lwt.t =
+  unless
+    (0. <= config.p2p.expected_pow && config.p2p.expected_pow <= 256.)
+    ~event:invalid_pow
+    ~payload:config.p2p.expected_pow
+  |> Lwt.return_ok
 
 (* Validate addresses. *)
 
@@ -407,40 +406,42 @@ let target_number_of_known_points_lower_than_maximum_conn =
     ("maximum", Data_encoding.int16)
 
 let validate_connections (config : Node_config_file.t) =
-  let limits = config.p2p.limits in
-  when_
-    (limits.min_connections > limits.expected_connections)
-    ~event:connections_min_expected
-    ~payload:(limits.min_connections, limits.expected_connections)
-  @ when_
-      (limits.expected_connections > limits.max_connections)
-      ~event:connections_expected_max
-      ~payload:(limits.expected_connections, limits.max_connections)
-  @ Option.fold
-      limits.max_known_peer_ids
-      ~none:[]
-      ~some:(fun (max_known_peer_ids, target_known_peer_ids) ->
-        when_
-          (target_known_peer_ids > max_known_peer_ids)
-          ~event:target_number_of_known_peers_greater_than_maximum
-          ~payload:(target_known_peer_ids, max_known_peer_ids)
-        @ when_
-            (limits.max_connections > target_known_peer_ids)
-            ~event:target_number_of_known_peers_lower_than_maximum_conn
-            ~payload:(target_known_peer_ids, limits.max_connections))
-  @ Option.fold
-      limits.max_known_points
-      ~none:[]
-      ~some:(fun (max_known_points, target_known_points) ->
-        when_
-          (target_known_points > max_known_points)
-          ~event:target_number_of_known_points_greater_than_maximum
-          ~payload:(max_known_points, target_known_points)
-        @ when_
-            (limits.max_connections > target_known_points)
-            ~event:target_number_of_known_points_lower_than_maximum_conn
-            ~payload:(target_known_points, limits.max_connections))
-  |> return
+  let validated_connections =
+    let limits = config.p2p.limits in
+    when_
+      (limits.min_connections > limits.expected_connections)
+      ~event:connections_min_expected
+      ~payload:(limits.min_connections, limits.expected_connections)
+    @ when_
+        (limits.expected_connections > limits.max_connections)
+        ~event:connections_expected_max
+        ~payload:(limits.expected_connections, limits.max_connections)
+    @ Option.fold
+        limits.max_known_peer_ids
+        ~none:[]
+        ~some:(fun (max_known_peer_ids, target_known_peer_ids) ->
+          when_
+            (target_known_peer_ids > max_known_peer_ids)
+            ~event:target_number_of_known_peers_greater_than_maximum
+            ~payload:(target_known_peer_ids, max_known_peer_ids)
+          @ when_
+              (limits.max_connections > target_known_peer_ids)
+              ~event:target_number_of_known_peers_lower_than_maximum_conn
+              ~payload:(target_known_peer_ids, limits.max_connections))
+    @ Option.fold
+        limits.max_known_points
+        ~none:[]
+        ~some:(fun (max_known_points, target_known_points) ->
+          when_
+            (target_known_points > max_known_points)
+            ~event:target_number_of_known_points_greater_than_maximum
+            ~payload:(max_known_points, target_known_points)
+          @ when_
+              (limits.max_connections > target_known_points)
+              ~event:target_number_of_known_points_lower_than_maximum_conn
+              ~payload:(target_known_points, limits.max_connections))
+  in
+  Lwt.return_ok validated_connections
 
 (* Main validation passes. *)
 
@@ -453,7 +454,7 @@ let validate_passes config =
 (* Main validation functions. *)
 
 let check config =
-  let open Lwt_tzresult_syntax in
+  let open Lwt_result_syntax in
   if config.Node_config_file.disable_config_validation then
     let*! () = Event.(emit disabled_event ()) in
     return_unit
@@ -461,7 +462,7 @@ let check config =
     let* t = validate_passes config in
     if has_error t then
       let*! () = Event.report t in
-      fail Invalid_node_configuration
+      tzfail Invalid_node_configuration
     else if has_warning t then
       let*! () = Event.report t in
       return_unit

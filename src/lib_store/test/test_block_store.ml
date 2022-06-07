@@ -23,6 +23,8 @@
 (*                                                                           *)
 (*****************************************************************************)
 
+module Assert = Lib_test.Assert
+module Assert_lib = Lib_test_extra.Assert_lib
 open Test_utils
 open Block_store
 
@@ -52,13 +54,13 @@ let assert_presence_in_block_store ?(with_metadata = false) block_store blocks =
       | Some b' ->
           if with_metadata then (
             Assert.equal
-              ~prn:(Format.asprintf "%a" Block_repr.pp_json)
+              ~pp:Block_repr.pp_json
               ~msg:"block equality with metadata"
               b
               b' ;
             return_unit)
           else (
-            Assert.equal_block
+            Assert_lib.Crypto.equal_block
               ~msg:"block equality without metadata"
               (Block_repr.header b)
               (Block_repr.header b') ;
@@ -106,7 +108,7 @@ let assert_pruned_blocks_in_block_store block_store blocks =
             pp_raw_block
             b
       | Some ({metadata = None; _} as b') ->
-          Assert.equal_block
+          Assert_lib.Crypto.equal_block
             ~msg:"block equality without metadata"
             (Block_repr.header b)
             (Block_repr.header b') ;
@@ -128,11 +130,11 @@ let assert_cemented_bound block_store (lowest, highest) =
       (Cemented_block_store.get_highest_cemented_level
          (Block_store.cemented_block_store block_store))
   in
-  Assert.is_true
-    ~msg:"is 0 the lowest cemented level?"
+  Assert.assert_true
+    "is 0 the lowest cemented level?"
     Compare.Int32.(lowest_cemented_level = lowest) ;
-  Assert.is_true
-    ~msg:"is head's lafl the lowest cemented level?"
+  Assert.assert_true
+    "is head's lafl the lowest cemented level?"
     Compare.Int32.(highest_cemented_level = highest)
 
 let test_storing_and_access_predecessors block_store =
@@ -463,9 +465,9 @@ let test_archive_merge block_store =
       (List.concat cycles)
   in
   let*! savepoint = Block_store.savepoint block_store in
-  Assert.equal ~prn:Int32.to_string ~msg:"savepoint" 0l (snd savepoint) ;
+  Assert.Int32.equal ~msg:"savepoint" 0l (snd savepoint) ;
   let*! caboose = Block_store.caboose block_store in
-  Assert.equal ~prn:Int32.to_string ~msg:"caboose" 0l (snd caboose) ;
+  Assert.Int32.equal ~msg:"caboose" 0l (snd caboose) ;
   return_unit
 
 let test_full_0_merge block_store =
@@ -510,13 +512,12 @@ let test_full_0_merge block_store =
     assert_pruned_blocks_in_block_store block_store expected_pruned_blocks
   in
   let*! savepoint = Block_store.savepoint block_store in
-  Assert.equal
-    ~prn:Int32.to_string
+  Assert.Int32.equal
     ~msg:"savepoint"
     (Int32.of_int expected_savepoint_level)
     (snd savepoint) ;
   let*! caboose = Block_store.caboose block_store in
-  Assert.equal ~prn:Int32.to_string ~msg:"caboose" 0l (snd caboose) ;
+  Assert.Int32.equal ~msg:"caboose" 0l (snd caboose) ;
   return_unit
 
 let test_full_2_merge block_store =
@@ -537,7 +538,9 @@ let test_full_2_merge block_store =
       (List.rev (List.concat cycles))
     (* hack: invert the reading order to clear the cache *)
   in
-  let expected_preserved_blocks = List.concat (List.sub (List.rev cycles) 3) in
+  let expected_preserved_blocks =
+    List.concat (List.take_n 3 (List.rev cycles))
+  in
   (* Last 3 cycles should have metadata *)
   let* () =
     assert_presence_in_block_store
@@ -546,7 +549,7 @@ let test_full_2_merge block_store =
       expected_preserved_blocks
   in
   let expected_pruned_blocks =
-    List.sub cycles (List.length cycles - 3) |> List.concat
+    List.take_n (List.length cycles - 3) cycles |> List.concat
   in
   (* First 7 cycles shouldn't have metadata *)
   let* () =
@@ -560,13 +563,9 @@ let test_full_2_merge block_store =
     |> WithExceptions.Option.get ~loc:__LOC__
     |> Block_repr.level
   in
-  Assert.equal
-    ~prn:Int32.to_string
-    ~msg:"savepoint"
-    expected_savepoint
-    (snd savepoint) ;
+  Assert.Int32.equal ~msg:"savepoint" expected_savepoint (snd savepoint) ;
   let*! caboose = Block_store.caboose block_store in
-  Assert.equal ~prn:Int32.to_string ~msg:"caboose" 0l (snd caboose) ;
+  Assert.Int32.equal ~msg:"caboose" 0l (snd caboose) ;
   return_unit
 
 let test_rolling_0_merge block_store =
@@ -602,14 +601,12 @@ let test_rolling_0_merge block_store =
       expected_preserved_blocks
   in
   let*! savepoint = Block_store.savepoint block_store in
-  Assert.equal
-    ~prn:Int32.to_string
+  Assert.Int32.equal
     ~msg:"savepoint"
     (Int32.of_int expected_savepoint_level)
     (snd savepoint) ;
   let*! caboose = Block_store.caboose block_store in
-  Assert.equal
-    ~prn:Int32.to_string
+  Assert.Int32.equal
     ~msg:"caboose"
     (Int32.of_int expected_savepoint_level)
     (snd caboose) ;
@@ -626,7 +623,9 @@ let test_rolling_2_merge block_store =
       (Rolling (Some {offset = 2}))
       10
   in
-  let expected_preserved_blocks = List.concat (List.sub (List.rev cycles) 3) in
+  let expected_preserved_blocks =
+    List.concat (List.take_n 3 (List.rev cycles))
+  in
   (* Last 3 cycles should have metadata *)
   let* () =
     assert_presence_in_block_store
@@ -635,7 +634,7 @@ let test_rolling_2_merge block_store =
       expected_preserved_blocks
   in
   let expected_pruned_blocks =
-    List.sub cycles (List.length cycles - 3) |> List.concat
+    List.take_n (List.length cycles - 3) cycles |> List.concat
   in
   (* First 7 cycles shouldn't have metadata *)
   let* () = assert_absence_in_block_store block_store expected_pruned_blocks in
@@ -647,17 +646,9 @@ let test_rolling_2_merge block_store =
     |> WithExceptions.Option.get ~loc:__LOC__
     |> Block_repr.level
   in
-  Assert.equal
-    ~prn:Int32.to_string
-    ~msg:"savepoint"
-    expected_savepoint
-    (snd savepoint) ;
+  Assert.Int32.equal ~msg:"savepoint" expected_savepoint (snd savepoint) ;
   let*! caboose = Block_store.caboose block_store in
-  Assert.equal
-    ~prn:Int32.to_string
-    ~msg:"caboose"
-    expected_savepoint
-    (snd caboose) ;
+  Assert.Int32.equal ~msg:"caboose" expected_savepoint (snd caboose) ;
   return_unit
 
 let wrap_test ?(keep_dir = false) (name, g) =

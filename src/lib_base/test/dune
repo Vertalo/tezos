@@ -1,9 +1,10 @@
 ; This file was automatically generated, do not edit.
 ; Edit file manifest/main.ml instead.
 
-(tests
+(env (_ (env-vars (NODE_PRELOAD hacl-wasm,ocaml-bls12-381,secp256k1-wasm))))
+
+(executables
  (names test_bounded test_time test_protocol)
- (package tezos-base)
  (modes native js)
  (libraries
   tezos-base
@@ -12,39 +13,43 @@
   qcheck-alcotest
   tezos-test-helpers)
  (js_of_ocaml)
- (flags (:standard -open Tezos_base -open Tezos_error_monad))
+ (flags (:standard
+         -open Tezos_base
+         -open Tezos_error_monad))
  (modules test_bounded test_time test_protocol))
 
 (rule
- (alias runtest_js)
+ (alias runtest)
  (package tezos-base)
- (locks npm)
- (action
-  (run
-   %{dep:../../tooling/node_wrapper.exe} --secp256k1 1.1.1 --hacl 1.1.0
-   %{dep:./test_bounded.bc.js})))
+ (action (run %{dep:./test_bounded.exe})))
+
+(rule
+ (alias runtest)
+ (package tezos-base)
+ (action (run %{dep:./test_time.exe})))
+
+(rule
+ (alias runtest)
+ (package tezos-base)
+ (action (run %{dep:./test_protocol.exe})))
 
 (rule
  (alias runtest_js)
  (package tezos-base)
- (locks npm)
- (action
-  (run
-   %{dep:../../tooling/node_wrapper.exe} --secp256k1 1.1.1 --hacl 1.1.0
-   %{dep:./test_time.bc.js})))
+ (action (run node %{dep:./test_bounded.bc.js})))
 
 (rule
  (alias runtest_js)
  (package tezos-base)
- (locks npm)
- (action
-  (run
-   %{dep:../../tooling/node_wrapper.exe} --secp256k1 1.1.1 --hacl 1.1.0
-   %{dep:./test_protocol.bc.js})))
+ (action (run node %{dep:./test_time.bc.js})))
 
-(test
+(rule
+ (alias runtest_js)
+ (package tezos-base)
+ (action (run node %{dep:./test_protocol.bc.js})))
+
+(executable
  (name test_p2p_addr)
- (package tezos-base)
  (modes native js)
  (libraries
   tezos-base
@@ -53,16 +58,44 @@
   qcheck-alcotest
   tezos-test-helpers)
  (js_of_ocaml)
- (flags (:standard -open Tezos_base -open Tezos_error_monad))
- (modules test_p2p_addr)
- (deps (file points.ok) (file points.ko)))
+ (flags (:standard
+         -open Tezos_base
+         -open Tezos_error_monad))
+ (modules test_p2p_addr))
+
+(rule
+ (alias runtest)
+ (package tezos-base)
+ (deps points.ok points.ko)
+ (action (run %{dep:./test_p2p_addr.exe})))
 
 (rule
  (alias runtest_js)
  (package tezos-base)
  (deps points.ok points.ko)
- (locks npm)
- (action
-  (run
-   %{dep:../../tooling/node_wrapper.exe} --secp256k1 1.1.1 --hacl 1.1.0
-   %{dep:./test_p2p_addr.bc.js})))
+ (action (run node %{dep:./test_p2p_addr.bc.js})))
+
+(executable
+ (name test_sized)
+ (modes native js)
+ (libraries
+  tezos-base
+  tezos-error-monad
+  data-encoding
+  qcheck-alcotest
+  tezos-test-helpers)
+ (js_of_ocaml)
+ (flags (:standard
+         -open Tezos_base
+         -open Tezos_error_monad))
+ (modules test_sized))
+
+(rule
+ (alias runtest)
+ (package tezos-base)
+ (action (run %{dep:./test_sized.exe})))
+
+(rule
+ (alias runtest_js)
+ (package tezos-base)
+ (action (run node %{dep:./test_sized.bc.js})))

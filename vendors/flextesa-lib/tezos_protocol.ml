@@ -66,13 +66,14 @@ module Protocol_kind = struct
     | `Granada
     | `Hangzhou
     | `Ithaca
+    | `Jakarta
     | `Alpha ]
 
   let names =
     [ ("Athens", `Athens); ("Babylon", `Babylon); ("Carthage", `Carthage)
     ; ("Delphi", `Delphi); ("Edo", `Edo); ("Florence", `Florence)
     ; ("Granada", `Granada); ("Hangzhou", `Hangzhou); ("Ithaca", `Ithaca)
-    ; ("Alpha", `Alpha) ]
+    ; ("Jakarta", `Jakarta); ("Alpha", `Alpha) ]
 
   let ( < ) k1 k2 =
     let rec aux = function
@@ -196,20 +197,27 @@ let protocol_parameters_json t : Ezjsonm.t =
   let extra_post_babylon_stuff subkind =
     let alpha_specific_parameters =
       match subkind with
-      | `Alpha ->
-          [ ("tx_rollup_enable", bool false)
-          ; (* TODO: https://gitlab.com/tezos/tezos/-/issues/2152 *)
-            ("tx_rollup_origination_size", int 60_000)
-          ; ("tx_rollup_hard_size_limit_per_inbox", int 100_000)
-          ; ("tx_rollup_hard_size_limit_per_message", int 5_000)
-          ; ("sc_rollup_enable", bool false)
+      | `Alpha  ->
+          [ ("sc_rollup_enable", bool false)
           ; ("sc_rollup_origination_size", int 6_314) ]
-      | `Hangzhou | `Ithaca -> []
+      | `Ithaca | `Jakarta -> []
       | _ -> failwith "unsupported protocol" in
     let list_of_zs = list (fun i -> string (Int.to_string i)) in
     let pre_alpha_specific_parameters =
       match subkind with
-      | `Ithaca | `Alpha ->
+      | `Alpha ->
+          [("liquidity_baking_toggle_ema_threshold", int 1000000000)
+          ]
+      | `Ithaca ->
+          [("liquidity_baking_escape_ema_threshold", int 666667)
+          ]
+      | `Jakarta ->
+          [("tx_rollup_enable", bool true)
+          ]
+      | _ -> failwith "unsupported protocol" in
+    let pre_ithaca_specific_parameters =
+      match subkind with
+      | `Ithaca | `Jakarta | `Alpha ->
           [ ("max_operations_time_to_live", int 120)
           ; ("blocks_per_stake_snapshot", int t.blocks_per_roll_snapshot)
           ; ("baking_reward_fixed_portion", string "10000000")
@@ -225,31 +233,17 @@ let protocol_parameters_json t : Ezjsonm.t =
           ; ( "ratio_of_frozen_deposits_slashed_per_double_endorsement"
             , dict [("numerator", int 1); ("denominator", int 2)] )
           ; ("double_baking_punishment", string "640000000") ]
-      | `Hangzhou ->
-          [ ("blocks_per_roll_snapshot", int t.blocks_per_roll_snapshot)
-          ; ("initial_endorsers", int 1)
-          ; ("delay_per_missing_endorsement", string (Int.to_string 1))
-          ; ( "time_between_blocks"
-            , list (ksprintf string "%d") t.time_between_blocks )
-          ; ("endorsers_per_block", int 56)
-          ; ("block_security_deposit", string (Int.to_string 640_000_000))
-          ; ("endorsement_security_deposit", string (Int.to_string 250_000))
-          ; ( "baking_reward_per_endorsement"
-            , list_of_zs t.baking_reward_per_endorsement )
-          ; ("endorsement_reward", list_of_zs t.endorsement_reward)
-          ; ("minimal_block_delay", string (Int.to_string t.minimal_block_delay))
-          ]
       | _ -> failwith "unsupported protocol" in
     let blocks_or_cycle_per_voting_period =
       match subkind with
-      | `Alpha ->
+      | `Jakarta | `Alpha ->
           [ ( "cycles_per_voting_period"
             , int (t.blocks_per_voting_period / t.blocks_per_cycle) ) ]
-      | `Ithaca | `Hangzhou ->
+      | `Ithaca ->
           [("blocks_per_voting_period", int t.blocks_per_voting_period)]
       | _ -> failwith "unsupported protocol" in
-    alpha_specific_parameters @ pre_alpha_specific_parameters
-    @ blocks_or_cycle_per_voting_period in
+    alpha_specific_parameters @ pre_alpha_specific_parameters @
+    pre_ithaca_specific_parameters @ blocks_or_cycle_per_voting_period in
   let common =
     [ ( "bootstrap_accounts"
       , list make_account (t.bootstrap_accounts @ [(t.dictator, 10_000_000L)])
@@ -267,7 +261,7 @@ let protocol_parameters_json t : Ezjsonm.t =
     ; ("quorum_max", int 7_000); ("min_proposal_quorum", int 500)
     ; ("liquidity_baking_subsidy", string "2500000")
     ; ("liquidity_baking_sunset_level", int 525600)
-    ; ("liquidity_baking_escape_ema_threshold", int 1000000) ] in
+    ] in
   match custom_parameters t with
   | Some s -> s
   | None -> dict (common @ extra_post_babylon_stuff t.kind)

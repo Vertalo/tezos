@@ -46,7 +46,7 @@ let err x = Exn (Script_cache_test_error x)
    model. It has been computed by a manual run of the test.
 
 *)
-let liquidity_baking_contract_size = 266738
+let liquidity_baking_contract_size = 267304
 
 let liquidity_baking_contract =
   Contract.of_b58check "KT1TxqZ8QtKvLu3V3JH7Gx58n7Co8pgtpQU5" |> function
@@ -86,7 +86,7 @@ let find ctxt addr =
       return (ctxt, identifier, script, Ex_script ir)
 
 let value_as_int :
-    type a. a Script_typed_ir.ty -> a -> Script_int_repr.z Script_int_repr.num =
+    type a ac. (a, ac) Script_typed_ir.ty -> a -> Script_int.z Script_int.num =
  fun ty v -> match ty with Int_t -> v | _ -> Stdlib.failwith "value_as_int"
 
 let add_some_contracts k src block baker =
@@ -120,7 +120,7 @@ let add_some_contracts k src block baker =
    model. It has been computed by a manual run of the test.
 
 *)
-let int_store_contract_size = 891
+let int_store_contract_size = 916
 
 (*
 
@@ -205,17 +205,17 @@ let test_update_modifies_cached_contract () =
   originate_contract "contracts/int-store.tz" "36" src block baker
   >>=? fun (addr, block) ->
   ( make_block block @! fun ctxt ->
-    find ctxt addr >>=? fun (ctxt, identifier, script, Ex_script ir) ->
+    find ctxt addr >>=? fun (ctxt, identifier, script, Ex_script (Script ir)) ->
     match ir.storage_type with
     | Int_t ->
         let storage' = Script_int.(add ir.storage (Script_int.of_int 1)) in
         let cached_contract' =
-          (script, Ex_script {ir with storage = storage'})
+          (script, Ex_script (Script {ir with storage = storage'}))
         in
         Script_cache.update ctxt identifier cached_contract' 1
         |> Environment.wrap_tzresult
         >>?= fun ctxt ->
-        find ctxt addr >>=? fun (_, _, _, Ex_script ir') ->
+        find ctxt addr >>=? fun (_, _, _, Ex_script (Script ir')) ->
         let storage = value_as_int ir'.storage_type ir'.storage in
         fail_unless
           (Script_int.compare storage storage' = 0)

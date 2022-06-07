@@ -70,11 +70,11 @@ type ('ta, 'tb) eq = Eq : ('same, 'same) eq
 type ex_comparable_ty =
   | Ex_comparable_ty : 'a Script_typed_ir.comparable_ty -> ex_comparable_ty
 
-type ex_ty = Ex_ty : 'a Script_typed_ir.ty -> ex_ty
+type ex_ty = Ex_ty : ('a, _) Script_typed_ir.ty -> ex_ty
 
 type ex_parameter_ty_and_entrypoints =
   | Ex_parameter_ty_and_entrypoints : {
-      arg_type : 'a Script_typed_ir.ty;
+      arg_type : ('a, _) Script_typed_ir.ty;
       entrypoints : 'a Script_typed_ir.entrypoints;
     }
       -> ex_parameter_ty_and_entrypoints
@@ -91,31 +91,45 @@ type toplevel = {
   views : Script_typed_ir.view_map;
 }
 
-type ('arg, 'storage) code = {
-  code :
-    ( ('arg, 'storage) Script_typed_ir.pair,
-      ( Script_typed_ir.operation Script_typed_ir.boxed_list,
-        'storage )
-      Script_typed_ir.pair )
-    Script_typed_ir.lambda;
-  arg_type : 'arg Script_typed_ir.ty;
-  storage_type : 'storage Script_typed_ir.ty;
-  views : Script_typed_ir.view_map;
-  entrypoints : 'arg Script_typed_ir.entrypoints;
-  code_size : Cache_memory_helpers.sint;
-      (** This is an over-approximation of the value size in memory, in
+type ('arg, 'storage) code =
+  | Code : {
+      code :
+        ( ('arg, 'storage) Script_typed_ir.pair,
+          ( Script_typed_ir.operation Script_typed_ir.boxed_list,
+            'storage )
+          Script_typed_ir.pair )
+        Script_typed_ir.lambda;
+      arg_type : ('arg, _) Script_typed_ir.ty;
+      storage_type : ('storage, _) Script_typed_ir.ty;
+      views : Script_typed_ir.view_map;
+      entrypoints : 'arg Script_typed_ir.entrypoints;
+      code_size : Cache_memory_helpers.sint;
+          (** This is an over-approximation of the value size in memory, in
          bytes, of the contract's static part, that is its source
          code. This includes the code of the contract as well as the code
          of the views. The storage size is not taken into account by this
          field as it has a dynamic size. *)
-}
+    }
+      -> ('arg, 'storage) code
 
 type ex_code = Ex_code : ('a, 'c) code -> ex_code
 
-type 'storage ex_view =
-  | Ex_view :
-      ('input * 'storage, 'output) Script_typed_ir.lambda
-      -> 'storage ex_view
+type 'storage typed_view =
+  | Typed_view : {
+      input_ty : ('input, _) Script_typed_ir.ty;
+      output_ty : ('output, _) Script_typed_ir.ty;
+      kinstr :
+        ( 'input * 'storage,
+          Script_typed_ir.end_of_stack,
+          'output,
+          Script_typed_ir.end_of_stack )
+        Script_typed_ir.kinstr;
+      original_code_expr : Script.node;
+    }
+      -> 'storage typed_view
+
+type 'storage typed_view_map =
+  (Script_string.t, 'storage typed_view) Script_typed_ir.map
 
 type ('a, 's, 'b, 'u) cinstr = {
   apply :
@@ -164,7 +178,7 @@ type type_logger =
 (** Create an empty big_map *)
 val empty_big_map :
   'a Script_typed_ir.comparable_ty ->
-  'b Script_typed_ir.ty ->
+  ('b, _) Script_typed_ir.ty ->
   ('a, 'b) Script_typed_ir.big_map
 
 val big_map_mem :
@@ -200,11 +214,12 @@ val big_map_get_and_update :
   Lwt.t
 
 val ty_eq :
-  error_details:'error_trace error_details ->
-  Script.location ->
-  'a Script_typed_ir.ty ->
-  'b Script_typed_ir.ty ->
-  (('a Script_typed_ir.ty, 'b Script_typed_ir.ty) eq, 'error_trace) Gas_monad.t
+  error_details:(Script.location, 'error_trace) error_details ->
+  ('a, 'ac) Script_typed_ir.ty ->
+  ('b, 'bc) Script_typed_ir.ty ->
+  ( (('a, 'ac) Script_typed_ir.ty, ('b, 'bc) Script_typed_ir.ty) eq,
+    'error_trace )
+  Gas_monad.t
 
 (** {3 Parsing and Typechecking Michelson} *)
 val parse_comparable_data :
@@ -219,14 +234,14 @@ val parse_data :
   context ->
   legacy:bool ->
   allow_forged:bool ->
-  'a Script_typed_ir.ty ->
+  ('a, _) Script_typed_ir.ty ->
   Script.node ->
   ('a * context) tzresult Lwt.t
 
 val unparse_data :
   context ->
   unparsing_mode ->
-  'a Script_typed_ir.ty ->
+  ('a, _) Script_typed_ir.ty ->
   'a ->
   (Script.node * context) tzresult Lwt.t
 
@@ -289,21 +304,21 @@ val parse_view_output_ty :
   Script.node ->
   (ex_ty * context) tzresult
 
-val parse_view_returning :
+val parse_view :
   ?type_logger:type_logger ->
   context ->
   legacy:bool ->
-  'storage Script_typed_ir.ty ->
+  ('storage, _) Script_typed_ir.ty ->
   Script_typed_ir.view ->
-  ('storage ex_view * context) tzresult Lwt.t
+  ('storage typed_view * context) tzresult Lwt.t
 
-val typecheck_views :
+val parse_views :
   ?type_logger:type_logger ->
   context ->
   legacy:bool ->
-  'storage Script_typed_ir.ty ->
+  ('storage, _) Script_typed_ir.ty ->
   Script_typed_ir.view_map ->
-  context tzresult Lwt.t
+  ('storage typed_view_map * context) tzresult Lwt.t
 
 (**
   [parse_ty] allowing big_map values, operations, contract and tickets.
@@ -327,17 +342,8 @@ val parse_ty :
 val unparse_ty :
   loc:'loc ->
   context ->
-  'a Script_typed_ir.ty ->
+  ('a, _) Script_typed_ir.ty ->
   ('loc Script.michelson_node * context) tzresult
-
-val unparse_comparable_ty :
-  loc:'loc ->
-  context ->
-  'a Script_typed_ir.comparable_ty ->
-  ('loc Script.michelson_node * context) tzresult
-
-val ty_of_comparable_ty :
-  'a Script_typed_ir.comparable_ty -> 'a Script_typed_ir.ty
 
 val parse_toplevel :
   context -> legacy:bool -> Script.expr -> (toplevel * context) tzresult Lwt.t
@@ -345,7 +351,7 @@ val parse_toplevel :
 val unparse_parameter_ty :
   loc:'loc ->
   context ->
-  'a Script_typed_ir.ty ->
+  ('a, _) Script_typed_ir.ty ->
   entrypoints:'a Script_typed_ir.entrypoints ->
   ('loc Script.michelson_node * context) tzresult
 
@@ -361,7 +367,7 @@ val typecheck_code :
   Script.expr ->
   (type_map * context) tzresult Lwt.t
 
-val serialize_ty_for_error : 'a Script_typed_ir.ty -> Script.expr
+val serialize_ty_for_error : ('a, _) Script_typed_ir.ty -> Script.expr
 
 val parse_code :
   ?type_logger:type_logger ->
@@ -375,7 +381,7 @@ val parse_storage :
   context ->
   legacy:bool ->
   allow_forged:bool ->
-  'storage Script_typed_ir.ty ->
+  ('storage, _) Script_typed_ir.ty ->
   storage:Script.lazy_expr ->
   ('storage * context) tzresult Lwt.t
 
@@ -389,16 +395,19 @@ val parse_script :
   (ex_script * context) tzresult Lwt.t
 
 (* Gas accounting may not be perfect in this function, as it is only called by RPCs. *)
-val unparse_script :
+val parse_and_unparse_script_unaccounted :
   context ->
+  legacy:bool ->
+  allow_forged_in_storage:bool ->
   unparsing_mode ->
-  ('a, 'b) Script_typed_ir.script ->
+  normalize_types:bool ->
+  Script.t ->
   (Script.t * context) tzresult Lwt.t
 
 val parse_contract :
   context ->
   Script.location ->
-  'a Script_typed_ir.ty ->
+  ('a, _) Script_typed_ir.ty ->
   Destination.t ->
   entrypoint:Entrypoint.t ->
   (context * 'a Script_typed_ir.typed_contract) tzresult Lwt.t
@@ -406,35 +415,41 @@ val parse_contract :
 val parse_contract_for_script :
   context ->
   Script.location ->
-  'a Script_typed_ir.ty ->
+  ('a, _) Script_typed_ir.ty ->
   Destination.t ->
   entrypoint:Entrypoint.t ->
   (context * 'a Script_typed_ir.typed_contract option) tzresult Lwt.t
 
-(** [parse_tx_rollup_deposit_parameters ctxt expr] extracts from
-    [expr] the parameters of the [deposit] entrypoint of transaction
-    rollups. *)
-val parse_tx_rollup_deposit_parameters :
-  context -> Script.expr -> (Tx_rollup.deposit_parameters * context) tzresult
+(** ['a ex_ty_cstr] is like [ex_ty], but also adds to the existential a function
+    used to reconstruct a value of type ['a] from the internal type of the
+    existential. Typically, it will be used to go from the type of an
+    entry-point to the full type of a contract. *)
+type 'a ex_ty_cstr =
+  | Ex_ty_cstr : {
+      ty : ('b, _) Script_typed_ir.ty;
+      construct : 'b -> 'a;
+      original_type_expr : Script.node;
+    }
+      -> 'a ex_ty_cstr
 
 val find_entrypoint :
-  error_details:'error_trace error_details ->
-  't Script_typed_ir.ty ->
+  error_details:(_, 'error_trace) error_details ->
+  ('t, _) Script_typed_ir.ty ->
   't Script_typed_ir.entrypoints ->
   Entrypoint.t ->
-  ((Script.node -> Script.node) * ex_ty, 'error_trace) Gas_monad.t
+  ('t ex_ty_cstr, 'error_trace) Gas_monad.t
 
-val list_entrypoints :
-  context ->
-  't Script_typed_ir.ty ->
+val list_entrypoints_uncarbonated :
+  ('t, _) Script_typed_ir.ty ->
   't Script_typed_ir.entrypoints ->
-  (Michelson_v1_primitives.prim list list
-  * (Michelson_v1_primitives.prim list * Script.unlocated_michelson_node)
-    Entrypoint.Map.t)
-  tzresult
+  Michelson_v1_primitives.prim list list
+  * (ex_ty * Script.node) Entrypoint.Map.t
 
 val pack_data :
-  context -> 'a Script_typed_ir.ty -> 'a -> (bytes * context) tzresult Lwt.t
+  context ->
+  ('a, _) Script_typed_ir.ty ->
+  'a ->
+  (bytes * context) tzresult Lwt.t
 
 val hash_comparable_data :
   context ->
@@ -444,7 +459,7 @@ val hash_comparable_data :
 
 val hash_data :
   context ->
-  'a Script_typed_ir.ty ->
+  ('a, _) Script_typed_ir.ty ->
   'a ->
   (Script_expr_hash.t * context) tzresult Lwt.t
 
@@ -457,7 +472,7 @@ val no_lazy_storage_id : lazy_storage_ids
  *)
 val collect_lazy_storage :
   context ->
-  'a Script_typed_ir.ty ->
+  ('a, _) Script_typed_ir.ty ->
   'a ->
   (lazy_storage_ids * context) tzresult
 
@@ -484,18 +499,27 @@ val extract_lazy_storage_diff :
   temporary:bool ->
   to_duplicate:lazy_storage_ids ->
   to_update:lazy_storage_ids ->
-  'a Script_typed_ir.ty ->
+  ('a, _) Script_typed_ir.ty ->
   'a ->
   ('a * Lazy_storage.diffs option * context) tzresult Lwt.t
 
 (* return [None] if none or more than one found *)
 val get_single_sapling_state :
   context ->
-  'a Script_typed_ir.ty ->
+  ('a, _) Script_typed_ir.ty ->
   'a ->
   (Sapling.Id.t option * context) tzresult
 
+(** [code_size ctxt code views] returns an overapproximation of the size of
+    the in-memory representation of [code] and [views] in bytes in the
+    context [ctxt]. *)
+val code_size :
+  context ->
+  ('a, 'b) Script_typed_ir.lambda ->
+  Script_typed_ir.view_map ->
+  (Cache_memory_helpers.sint * context) tzresult
+
 (** [script_size script] returns an overapproximation of the size of
-    the in-memory representation of [script] as well as the cost
+    the in-memory representation of [script] in bytes as well as the cost
     associated to computing that overapproximation. *)
 val script_size : ex_script -> int * Gas_limit_repr.cost

@@ -46,14 +46,13 @@
 
 (** History modes for the node. *)
 
-(** The parameter for [Full] And [Rolling] mode is called
-   [additional_cycles].
+(** The parameter for [Full] And [Rolling] mode is called [additional_cycles].
 
     For the [Full] (resp. [Rolling]) mode it controls the number of
-   contexts (resp. blocks) we preserved behind the [checkpoint] (aka
-   the no fork point]). Default in sandbox mode is [2] and [5] for
-   mainnet parameters (see [preserved_cycles] in the protocol
-   parameters). *)
+    contexts (resp. blocks) we preserved behind the [checkpoint] (aka
+    the no fork point). Default in sandbox mode is [2] and [5] for
+    mainnet parameters (see [preserved_cycles] in the protocol
+    parameters). *)
 type history_mode = Archive | Full of int option | Rolling of int option
 
 (** Values that can be passed to the node's [--media-type] argument *)
@@ -77,6 +76,9 @@ type argument =
   | Peer of string  (** [--peer] *)
   | No_bootstrap_peers  (** [--no-bootstrap-peers] *)
   | Disable_operations_precheck  (** [--disable-mempool-precheck] *)
+  | Media_type of media_type  (** [--media-type] *)
+  | Metadata_size_limit of int option  (** --metadata-size-limit *)
+  | Metrics_addr of string  (** [--metrics-addr] *)
 
 (** Tezos node states. *)
 type t
@@ -122,7 +124,6 @@ val create :
   ?advertised_net_port:int ->
   ?rpc_host:string ->
   ?rpc_port:int ->
-  ?media_type:media_type ->
   argument list ->
   t
 
@@ -390,7 +391,6 @@ val init :
   ?rpc_port:int ->
   ?event_level:Daemon.Level.default_level ->
   ?event_sections_levels:(string * Daemon.Level.level) list ->
-  ?media_type:media_type ->
   argument list ->
   t Lwt.t
 

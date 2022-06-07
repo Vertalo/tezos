@@ -2,7 +2,7 @@
 (*                                                                           *)
 (* Open Source License                                                       *)
 (* Copyright (c) 2018 Dynamic Ledger Solutions, Inc. <contact@tezos.com>     *)
-(* Copyright (c) 2022 Trili Tech  <contact@trili.tech>                       *)
+(* Copyright (c) 2021-2022 Trili Tech, <contact@trili.tech>                  *)
 (*                                                                           *)
 (* Permission is hereby granted, free of charge, to any person obtaining a   *)
 (* copy of this software and associated documentation files (the "Software"),*)
@@ -108,9 +108,9 @@ let liquidity_baking_sunset_level c =
   let constants = Raw_context.constants c in
   constants.liquidity_baking_sunset_level
 
-let liquidity_baking_escape_ema_threshold c =
+let liquidity_baking_toggle_ema_threshold c =
   let constants = Raw_context.constants c in
-  constants.liquidity_baking_escape_ema_threshold
+  constants.liquidity_baking_toggle_ema_threshold
 
 let parametric c = Raw_context.constants c
 
@@ -150,6 +150,10 @@ let tx_rollup_enable c =
   let constants = Raw_context.constants c in
   constants.tx_rollup_enable
 
+let tx_rollup_sunset_level c =
+  let constants = Raw_context.constants c in
+  constants.tx_rollup_sunset_level
+
 let tx_rollup_origination_size c =
   let constants = Raw_context.constants c in
   constants.tx_rollup_origination_size
@@ -161,6 +165,10 @@ let tx_rollup_hard_size_limit_per_inbox c =
 let tx_rollup_hard_size_limit_per_message c =
   let constants = Raw_context.constants c in
   constants.tx_rollup_hard_size_limit_per_message
+
+let tx_rollup_max_withdrawals_per_batch c =
+  let constants = Raw_context.constants c in
+  constants.tx_rollup_max_withdrawals_per_batch
 
 let tx_rollup_commitment_bond c =
   let constants = Raw_context.constants c in
@@ -174,9 +182,29 @@ let tx_rollup_withdraw_period c =
   let constants = Raw_context.constants c in
   constants.tx_rollup_withdraw_period
 
-let tx_rollup_max_unfinalized_levels c =
+let tx_rollup_max_inboxes_count c =
   let constants = Raw_context.constants c in
-  constants.tx_rollup_max_unfinalized_levels
+  constants.tx_rollup_max_inboxes_count
+
+let tx_rollup_max_messages_per_inbox c =
+  let constants = Raw_context.constants c in
+  constants.tx_rollup_max_messages_per_inbox
+
+let tx_rollup_max_commitments_count c =
+  let constants = Raw_context.constants c in
+  constants.tx_rollup_max_commitments_count
+
+let tx_rollup_cost_per_byte_ema_factor c =
+  let constants = Raw_context.constants c in
+  constants.tx_rollup_cost_per_byte_ema_factor
+
+let tx_rollup_max_ticket_payload_size c =
+  let constants = Raw_context.constants c in
+  constants.tx_rollup_max_ticket_payload_size
+
+let tx_rollup_rejection_max_proof_size c =
+  let constants = Raw_context.constants c in
+  constants.tx_rollup_rejection_max_proof_size
 
 let ratio_of_frozen_deposits_slashed_per_double_endorsement c =
   let constants = Raw_context.constants c in
@@ -189,3 +217,27 @@ let sc_rollup_enable c =
 let sc_rollup_origination_size c =
   let constants = Raw_context.constants c in
   constants.sc_rollup_origination_size
+
+let sc_rollup_challenge_window_in_blocks c =
+  let constants = Raw_context.constants c in
+  constants.sc_rollup_challenge_window_in_blocks
+
+let sc_rollup_max_available_messages c =
+  let constants = Raw_context.constants c in
+  constants.sc_rollup_max_available_messages
+
+let sc_rollup_stake_amount_in_mutez c =
+  let constants = Raw_context.constants c in
+  constants.sc_rollup_stake_amount_in_mutez
+
+let sc_rollup_commitment_frequency_in_blocks c =
+  let constants = Raw_context.constants c in
+  constants.sc_rollup_commitment_frequency_in_blocks
+
+let sc_rollup_commitment_storage_size_in_bytes c =
+  let constants = Raw_context.constants c in
+  constants.sc_rollup_commitment_storage_size_in_bytes
+
+let sc_rollup_max_lookahead_in_blocks c =
+  let constants = Raw_context.constants c in
+  constants.sc_rollup_max_lookahead_in_blocks

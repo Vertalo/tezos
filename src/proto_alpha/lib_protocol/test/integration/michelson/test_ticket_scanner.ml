@@ -41,7 +41,7 @@ let ( let* ) m f = m >>=? f
 let wrap m = m >|= Environment.wrap_tzresult
 
 let new_ctxt () =
-  let* (block, _) = Context.init 1 in
+  let* (block, _contract) = Context.init1 () in
   let* incr = Incremental.begin_construction block in
   return @@ Incremental.alpha_ctxt incr
 
@@ -57,7 +57,7 @@ let string_list_of_ex_tickets ctxt tickets =
       @@ Script_ir_translator.unparse_data
            ctxt
            Script_ir_translator.Readable
-           (Script_ir_translator.ty_of_comparable_ty cty)
+           cty
            contents
     in
     let content =
@@ -166,8 +166,7 @@ let make_string_tickets ctxt ticketer_amounts =
     ([], ctxt)
 
 let tickets_from_big_map_ref ~pre_populated value_exp =
-  let* (block, contracts) = Context.init 1 in
-  let source = WithExceptions.Option.get ~loc:__LOC__ @@ List.hd contracts in
+  let* (block, source) = Context.init1 () in
   let* (operation, originated) =
     Op.contract_origination (B block) source ~script:Op.dummy_script
   in
@@ -184,8 +183,8 @@ let tickets_from_big_map_ref ~pre_populated value_exp =
             wrap
             @@ Script_ir_translator.hash_comparable_data
                  ctxt
-                 Script_typed_ir.int_key
-                 (Script_int_repr.of_int key)
+                 Script_typed_ir.int_t
+                 (Script_int.of_int key)
           in
           return
             ( {

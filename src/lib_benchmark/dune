@@ -11,8 +11,14 @@
   tezos-micheline
   tezos-clic
   data-encoding
+  prbnmcn-cgrph
+  prbnmcn-dagger
+  prbnmcn-dagger-stats
   prbnmcn-stats
+  pringo
   benchmark-utils
   pyml-plot
   ocaml-migrate-parsetree)
- (flags (:standard -open Tezos_base.TzPervasives -open Tezos_stdlib_unix)))
+ (flags (:standard
+         -open Tezos_base.TzPervasives
+         -open Tezos_stdlib_unix)))

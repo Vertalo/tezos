@@ -48,6 +48,7 @@ end
 type error +=
   | LedgerError of Ledgerwallet.Transport.error
   | Ledger_signing_hash_mismatch of string * string
+  | Ledger_msg_chunk_too_long of string
 
 let error_encoding =
   let open Data_encoding in
@@ -67,6 +68,22 @@ let () =
     error_encoding
     (function LedgerError e -> Some e | _ -> None)
     (fun e -> LedgerError e)
+
+let () =
+  register_error_kind
+    `Permanent
+    ~id:"signer.ledger.msg-chunk-too-big"
+    ~title:"Too long message chunk sent to a ledger"
+    ~description:"Too long message chunk sent to a ledger."
+    ~pp:(fun ppf msg ->
+      Format.fprintf
+        ppf
+        "Chunk of ledger message %s too long, the ledger app may not be up to \
+         date."
+        msg)
+    Data_encoding.(obj1 (req "msg" string))
+    (function Ledger_msg_chunk_too_long msg -> Some msg | _ -> None)
+    (fun msg -> Ledger_msg_chunk_too_long msg)
 
 let () =
   let description ledger_hash computed_hash =
@@ -102,24 +119,36 @@ let pp_round_opt fmt = function
 (** Wrappers around Ledger APDUs. *)
 module Ledger_commands = struct
   let wrap_ledger_cmd f =
+    let open Lwt_result_syntax in
     let buf = Buffer.create 100 in
     let pp =
       Format.make_formatter
         (fun s ofs lgth -> Buffer.add_substring buf s ofs lgth)
-        (fun () -> Buffer.clear buf)
+        (fun () ->
+          Events.(emit__dont_wait__use_with_care Ledger.communication)
+            (Buffer.contents buf) ;
+          Buffer.clear buf)
     in
     let res = f pp in
-    match res with Error err -> fail (LedgerError err) | Ok v -> return v
+    match res with
+    | Error
+        (Ledgerwallet.Transport.AppError
+          {status = Ledgerwallet.Transport.Status.Incorrect_length_for_ins; msg})
+      ->
+        tzfail (Ledger_msg_chunk_too_long msg)
+    | Error err -> tzfail (LedgerError err)
+    | Ok v -> return v
 
   let get_version ~device_info h =
-    let open Lwt_tzresult_syntax in
+    let open Lwt_result_syntax in
     let buf = Buffer.create 100 in
     let pp = Format.formatter_of_buffer buf in
     let version = Ledgerwallet_tezos.get_version ~pp h in
+    let*! () = Events.(emit Ledger.communication) (Buffer.contents buf) in
     match version with
     | Error e ->
         let*! () =
-          Events.(emit ledger_not_tezos)
+          Events.(emit Ledger.not_tezos)
             ( device_info.Hidapi.path,
               Format.asprintf "@[Ledger %a@]" Ledgerwallet.Transport.pp_error e
             )
@@ -138,7 +167,7 @@ module Ledger_commands = struct
           wrap_ledger_cmd (fun pp -> Ledgerwallet_tezos.get_git_commit ~pp h)
         in
         let*! () =
-          Events.(emit ledger_found_application)
+          Events.(emit Ledger.found_application)
             ( Format.asprintf "%a" Ledgerwallet_tezos.Version.pp version,
               device_info.path,
               git_commit )
@@ -156,7 +185,7 @@ module Ledger_commands = struct
 
   let public_key_returning_instruction which ?(prompt = false) hidapi curve path
       =
-    let open Lwt_tzresult_syntax in
+    let open Lwt_result_syntax in
     let path = Bip32_path.tezos_root @ path in
     let+ pk =
       match which with
@@ -209,7 +238,7 @@ module Ledger_commands = struct
 
   let public_key ?(first_import : Client_context.io_wallet option) hid curve
       path =
-    let open Lwt_tzresult_syntax in
+    let open Lwt_result_syntax in
     match first_import with
     | Some cctxt ->
         let* pk = get_public_key ~prompt:false hid curve path in
@@ -225,12 +254,12 @@ module Ledger_commands = struct
     | None -> get_public_key ~prompt:false hid curve path
 
   let public_key_hash ?first_import hid curve path =
-    let open Lwt_tzresult_syntax in
+    let open Lwt_result_syntax in
     let* pk = public_key ?first_import hid curve path in
     return (pkh_of_pk pk, pk)
 
   let get_authorized_path hid version =
-    let open Lwt_tzresult_syntax in
+    let open Lwt_result_syntax in
     let open Ledgerwallet_tezos.Version in
     if version.major < 2 then
       let+ path =
@@ -257,7 +286,7 @@ module Ledger_commands = struct
       | Ok (path, curve) -> return (`Path_curve (path, curve))
 
   let sign ?watermark ~version hid curve path (base_msg : Bytes.t) =
-    let open Lwt_tzresult_syntax in
+    let open Lwt_result_syntax in
     let msg =
       Option.fold watermark ~none:base_msg ~some:(fun watermark ->
           Bytes.cat (Signature.bytes_of_watermark watermark) base_msg)
@@ -291,7 +320,7 @@ module Ledger_commands = struct
           let ledger_one = Blake2B.of_bytes_exn (Cstruct.to_bytes hsh) in
           if Blake2B.equal hash_msg ledger_one then return_unit
           else
-            fail
+            tzfail
               (Ledger_signing_hash_mismatch
                  (Blake2B.to_string ledger_one, Blake2B.to_string hash_msg))
     in
@@ -320,7 +349,7 @@ module Ledger_commands = struct
         return (Signature.of_p256 signature)
 
   let get_deterministic_nonce hid curve path msg =
-    let open Lwt_tzresult_syntax in
+    let open Lwt_result_syntax in
     let path = Bip32_path.tezos_root @ path in
     let* nonce =
       wrap_ledger_cmd (fun pp ->
@@ -349,7 +378,7 @@ module Ledger_id = struct
   let curve = Ledgerwallet_tezos.Ed25519
 
   let get hidapi =
-    let open Lwt_tzresult_syntax in
+    let open Lwt_result_syntax in
     let* pk = Ledger_commands.get_public_key hidapi curve [] in
     let pkh = Signature.Public_key.hash pk in
     let animals = animals_of_pkh pkh in
@@ -400,7 +429,7 @@ module Ledger_uri = struct
             x
 
   let parse_animals animals =
-    match String.split '-' animals with
+    match String.split_no_empty '-' animals with
     | [c; t; h; d] -> Some {Ledger_names.c; t; h; d}
     | _ -> None
 
@@ -411,7 +440,7 @@ module Ledger_uri = struct
     | Ledgerwallet_tezos.Bip32_ed25519 -> true
 
   let parse ?allow_weak uri : t tzresult Lwt.t =
-    let open Lwt_tzresult_syntax in
+    let open Lwt_result_syntax in
     let host = Uri.host uri in
     let* ledger =
       match Option.bind host Signature.Public_key_hash.of_b58check_opt with
@@ -421,7 +450,7 @@ module Ledger_uri = struct
           | Some animals -> return (Ledger_id.Animals animals)
           | None -> failwith "Cannot parse host of URI: %s" (Uri.to_string uri))
     in
-    let components = String.split '/' (Uri.path uri) in
+    let components = String.split_no_empty '/' (Uri.path uri) in
     match components with
     | s :: tl ->
         let (curve, more_path) =
@@ -451,7 +480,7 @@ module Ledger_uri = struct
     | [] -> return (`Ledger ledger)
 
   let ledger_uri_or_alias_param next =
-    let open Lwt_tzresult_syntax in
+    let open Lwt_result_syntax in
     let name = "account-alias-or-ledger-uri" in
     let desc =
       "An imported ledger alias or a ledger URI (e.g. \
@@ -492,12 +521,14 @@ module Ledger_uri = struct
             path)
 
   let if_matches (meta_uri : t) ledger_id cont =
+    let open Lwt_result_syntax in
     match meta_uri with
     | `Ledger l -> if Ledger_id.equal l ledger_id then cont () else return_none
     | `Ledger_account {Ledger_account.ledger; _} ->
         if Ledger_id.equal ledger ledger_id then cont () else return_none
 
   let full_account (ledger_uri : t) =
+    let open Lwt_result_syntax in
     match ledger_uri with
     | `Ledger_account acc -> return acc
     | `Ledger ledger_id ->
@@ -543,17 +574,21 @@ let nano_s_product_ids = [0x0001] @ (0x1000 -- 0x101f)
 
 let nano_x_product_ids = [0x0004] @ (0x4000 -- 0x401f)
 
+let nano_s_plus_product_ids = [0x0005] @ (0x5000 -- 0x501f)
+
 let use_ledger ?(filter : Filter.t = `None) f =
-  let open Lwt_tzresult_syntax in
+  let open Lwt_result_syntax in
   let ledgers =
-    let all_product_ids = nano_s_product_ids @ nano_x_product_ids in
+    let all_product_ids =
+      nano_s_product_ids @ nano_x_product_ids @ nano_s_plus_product_ids
+    in
     let open Hidapi in
     List.filter
       (fun hid -> List.mem ~equal:Int.equal hid.product_id all_product_ids)
       (enumerate ~vendor_id ())
   in
   let*! () =
-    Events.(emit ledger_found)
+    Events.(emit Ledger.found)
       ( List.length ledgers,
         String.concat
           " -- "
@@ -563,7 +598,7 @@ let use_ledger ?(filter : Filter.t = `None) f =
              ledgers) )
   in
   let process_device device_info f =
-    let*! () = Events.(emit ledger_processing) device_info.Hidapi.path in
+    let*! () = Events.(emit Ledger.processing) device_info.Hidapi.path in
     (* HID interfaces get the number 0
        (cf. https://github.com/LedgerHQ/ledger-nano-s/issues/48)
        *BUT* on MacOSX the Hidapi library does not report the interface-number
@@ -616,7 +651,7 @@ let is_derivation_scheme_supported version curve =
     (major, minor, patch) >= min_version_of_derivation_scheme curve)
 
 let use_ledger_or_fail ~ledger_uri ?filter ?msg f =
-  let open Lwt_tzresult_syntax in
+  let open Lwt_result_syntax in
   let* o =
     use_ledger
       ?filter
@@ -693,6 +728,8 @@ module Signer_implementation : Client_keys.SIGNER = struct
        support non-hardened paths, so each node of the path must be hardened."
       Bip32_path.(string_of_path tezos_root)
 
+  include Client_keys.Signature_type
+
   let neuterize (sk : sk_uri) =
     let open Lwt_result_syntax in
     let*? v = make_pk_uri (sk :> Uri.t) in
@@ -702,7 +739,7 @@ module Signer_implementation : Client_keys.SIGNER = struct
 
   let public_key_maybe_prompt ?(first_import : Client_context.io_wallet option)
       (pk_uri : pk_uri) =
-    let open Lwt_tzresult_syntax in
+    let open Lwt_result_syntax in
     match Global_cache.get pk_uri with
     | Some (_, pk) -> return pk
     | None -> (
@@ -724,7 +761,7 @@ module Signer_implementation : Client_keys.SIGNER = struct
         | Ok v -> return v)
 
   let public_key_hash_maybe_prompt ?first_import pk_uri =
-    let open Lwt_tzresult_syntax in
+    let open Lwt_result_syntax in
     match Global_cache.get pk_uri with
     | Some (pkh, pk) -> return (pkh, Some pk)
     | None ->
@@ -739,7 +776,7 @@ module Signer_implementation : Client_keys.SIGNER = struct
     public_key_hash_maybe_prompt ~first_import:io pk_uri
 
   let sign ?watermark (sk_uri : sk_uri) msg =
-    let open Lwt_tzresult_syntax in
+    let open Lwt_result_syntax in
     let* ledger_uri = Ledger_uri.parse (sk_uri :> Uri.t) in
     let* {curve; path; _} = Ledger_uri.full_account ledger_uri in
     use_ledger_or_fail
@@ -751,7 +788,7 @@ module Signer_implementation : Client_keys.SIGNER = struct
         return_some bytes)
 
   let deterministic_nonce (sk_uri : sk_uri) msg =
-    let open Lwt_tzresult_syntax in
+    let open Lwt_result_syntax in
     let* ledger_uri = Ledger_uri.parse (sk_uri :> Uri.t) in
     let* {curve; path; _} = Ledger_uri.full_account ledger_uri in
     use_ledger_or_fail
@@ -763,11 +800,11 @@ module Signer_implementation : Client_keys.SIGNER = struct
         return_some (Bigstring.to_bytes bytes))
 
   let deterministic_nonce_hash (sk : sk_uri) msg =
-    let open Lwt_tzresult_syntax in
+    let open Lwt_result_syntax in
     let* nonce = deterministic_nonce sk msg in
     return (Blake2B.to_bytes (Blake2B.hash_bytes [nonce]))
 
-  let supports_deterministic_nonces _ = return_true
+  let supports_deterministic_nonces _ = Lwt_result_syntax.return_true
 end
 
 (* The Ledger uses a special value 0x00000000 for the “any” chain-id: *)
@@ -778,7 +815,7 @@ let pp_ledger_chain_id fmt s =
 
 (** Commands for both ledger applications. *)
 let generic_commands group =
-  let open Lwt_tzresult_syntax in
+  let open Lwt_result_syntax in
   Clic.
     [
       command
@@ -972,7 +1009,7 @@ let generic_commands group =
 (** Commands specific to the Baking app minus the high-water-mark ones
     which get a specific treatment in {!high_water_mark_commands}. *)
 let baking_commands group =
-  let open Lwt_tzresult_syntax in
+  let open Lwt_result_syntax in
   Clic.
     [
       Clic.command
@@ -1252,7 +1289,7 @@ let baking_commands group =
     with the correct one “high water mark” (it's a mark of the highest
     water level). *)
 let high_water_mark_commands group watermark_spelling =
-  let open Lwt_tzresult_syntax in
+  let open Lwt_result_syntax in
   let make_desc desc =
     if Compare.List_length_with.(watermark_spelling = 1) then
       desc ^ " (legacy/deprecated spelling)"

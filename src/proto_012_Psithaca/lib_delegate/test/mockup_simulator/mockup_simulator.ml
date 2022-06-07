@@ -598,13 +598,12 @@ let rec process_block state block_hash (block_header : Block_header.t)
                     Protocol.operation_data_encoding
                     proto
                 in
-                let receipt = None in
                 {
                   Mockup.M.Block_services.chain_id;
                   hash;
                   shell;
                   protocol_data;
-                  receipt;
+                  receipt = Empty;
                 })
               pass)
           operations
@@ -1007,7 +1006,7 @@ let default_config =
     (* Rounds should be long enough for the bakers to
        exchange all the necessary messages. *)
     round1 = 3L (* No real need to increase round durations. *);
-    timeout = 10;
+    timeout = 30;
     delegate_selection = Random;
     consensus_committee_size =
       Default_parameters.constants_mainnet.consensus_committee_size;
@@ -1078,7 +1077,7 @@ let run ?(config = default_config) bakers_spec =
     Lwt.pick
       [
         timeout_process ();
-        Lwt_tzresult_syntax.join
+        Lwt_result_syntax.tzjoin
           (take_third
              (List.fold_left
                 (fun (i, delegates_acc, ms) (n, user_hooks) ->

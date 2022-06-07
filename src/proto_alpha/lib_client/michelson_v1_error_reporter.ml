@@ -128,6 +128,7 @@ let fetch_script (cctxt : #Protocol_client_context.rpc_context) ~chain ~block
     cctxt
     (chain, block)
     ~unparsing_mode:Readable
+    ~normalize_types:true
     ~contract
   >>=? function
   | None -> fail (Fetch_script_not_found_meta_error contract)
@@ -403,7 +404,7 @@ let report_errors ~details ~show_source ?parsed ppf errs =
         Format.fprintf
           ppf
           "@[<v 2>Internal operation replay attempt:@,%a@]"
-          Operation_result.pp_internal_operation
+          Operation_result.pp_internal_operation_result
           op ;
         if rest <> [] then Format.fprintf ppf "@," ;
         print_trace locations rest
@@ -744,13 +745,13 @@ let report_errors ~details ~show_source ?parsed ppf errs =
               "@[<hov 0>@[<hov 2>Type@ %a@]@ is not comparable.@]"
               print_ty
               ty
-        | Inconsistent_types (opt_loc, tya, tyb) ->
+        | Inconsistent_types (loc, tya, tyb) ->
             Format.fprintf
               ppf
               "@[<hov 0>@[<hov 2>%aType@ %a@]@ @[<hov 2>is not compatible with \
                type@ %a.@]@]"
-              (fun fmt -> function None -> () | Some loc -> print_loc fmt loc)
-              opt_loc
+              print_loc
+              loc
               print_ty
               tya
               print_ty

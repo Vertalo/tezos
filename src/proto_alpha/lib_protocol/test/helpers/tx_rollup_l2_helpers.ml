@@ -30,22 +30,23 @@ open Protocol.Tx_rollup_l2_storage_sig
 
 (* Build a Tezos context with binary trees *)
 module Store = struct
-  open Tezos_context_encoding.Context
-
   module Conf : Irmin_pack.Conf.S = struct
     let entries = 2
 
     let stable_hash = 2
 
     let inode_child_order = `Seeded_hash
+
+    let contents_length_header = None
+
+    let forbid_empty_dir_persistence = true
   end
+
+  open Irmin_pack_mem.Maker (Conf)
 
   (* We could directly use a simpler encoding for commits
      instead of keeping the same as in the current context. *)
-  include
-    Irmin_pack_mem.Make (Node) (Commit) (Conf) (Metadata) (Contents) (Path)
-      (Branch)
-      (Hash)
+  include Make (Tezos_context_encoding.Context.Schema)
 end
 
 module Irmin_storage :
@@ -66,6 +67,11 @@ module Irmin_storage :
   let set store key value =
     let open Lwt_syntax in
     let* store = Store.Tree.add store (path key) value in
+    return_ok store
+
+  let remove store key =
+    let open Lwt_syntax in
+    let* store = Store.Tree.remove store (path key) in
     return_ok store
 
   module Syntax = struct
@@ -90,6 +96,8 @@ let empty_context : Context_l2.t = empty_storage
 
 let rng_state = Random.State.make_self_init ()
 
+let gen_l1_address ?seed () = Signature.generate_key ~algo:Ed25519 ?seed ()
+
 let gen_l2_address () =
   let seed =
     Bytes.init 32 (fun _ -> char_of_int @@ Random.State.int rng_state 255)
@@ -98,7 +106,9 @@ let gen_l2_address () =
   let public_key = Bls12_381.Signature.MinPk.derive_pk secret_key in
   (secret_key, public_key, Tx_rollup_l2_address.of_bls_pk public_key)
 
-let make_unit_ticket_key ctxt ticketer address =
+(** [make_unit_ticket_key ctxt ticketer l2_address] computes the key hash of
+    the unit ticket crafted by [ticketer] and owned by [l2_address]. *)
+let make_unit_ticket_key ticketer l2_address =
   let open Tezos_micheline.Micheline in
   let open Michelson_v1_primitives in
   let ticketer =
@@ -111,11 +121,14 @@ let make_unit_ticket_key ctxt ticketer address =
   let ty = Prim (0, T_unit, [], []) in
   let contents = Prim (0, D_Unit, [], []) in
   let owner =
-    String (dummy_location, Tx_rollup_l2_address.to_b58check address)
+    String (dummy_location, Tx_rollup_l2_address.to_b58check l2_address)
   in
-  match Alpha_context.Ticket_hash.make ctxt ~ticketer ~ty ~contents ~owner with
-  | Ok (x, _) -> x
-  | Error _ -> raise (Invalid_argument "make_unit_ticket_key")
+  Alpha_context.Ticket_hash.Internal_for_tests.make_uncarbonated
+    ~ticketer
+    ~ty
+    ~contents
+    ~owner
+  |> WithExceptions.Result.get_ok ~loc:__LOC__
 
 let gen_n_address n =
   List.init ~when_negative_length:[] n (fun _ -> gen_l2_address ()) |> function
@@ -125,15 +138,13 @@ let gen_n_address n =
 let gen_n_ticket_hash n =
   let x =
     Lwt_main.run
-      ( Context.init n >>=? fun (b, contracts) ->
-        Incremental.begin_construction b >|=? Incremental.alpha_ctxt
-        >>=? fun ctxt ->
+      ( Context.init_n n () >>=? fun (_, contracts) ->
         let addressess = gen_n_address n in
         let tickets =
           List.map2
             ~when_different_lengths:[]
             (fun contract (_, _, address) ->
-              make_unit_ticket_key ctxt contract address)
+              make_unit_ticket_key contract address)
             contracts
             addressess
         in

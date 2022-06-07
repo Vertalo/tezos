@@ -24,26 +24,26 @@
 (*                                                                           *)
 (*****************************************************************************)
 
+module Assert_lib = Lib_test_extra.Assert_lib
 open Test_utils
 
 let check_flags descr store expected_head =
   let open Lwt_result_syntax in
   let chain_store = Store.main_chain_store store in
   let*! current_head = Store.Chain.current_head chain_store in
-  Assert.equal_block
+  Assert_lib.Crypto.equal_block
     ~msg:("head consistency: " ^ descr)
     (Store.Block.header expected_head)
     (Store.Block.header current_head) ;
   let history_mode = Store.Chain.history_mode chain_store in
-  Assert.equal_history_mode
+  Assert_lib.Shell_services.equal_history_mode
     ~msg:("history mode consistency: " ^ descr)
     history_mode
     History_mode.Archive ;
   let*! checkpoint = Store.Chain.checkpoint chain_store in
   let* metadata = Store.Block.get_block_metadata chain_store expected_head in
   let expected_checkpoint = Store.Block.last_allowed_fork_level metadata in
-  Assert.equal
-    ~prn:(Format.sprintf "%ld")
+  Assert.Int32.equal
     ~msg:("checkpoint consistency: " ^ descr)
     expected_checkpoint
     (snd checkpoint) ;
@@ -78,6 +78,8 @@ let test_from_bootstrapped ~descr (store_dir, context_dir) store
             genesis
             ~user_activated_upgrades:[]
             ~user_activated_protocol_overrides:[]
+            ~operation_metadata_size_limit:None
+            ~progress_display_mode:Animation.Auto
         in
         return_false)
       ~on_error:(function
@@ -204,6 +206,8 @@ let test_from_snapshot ~descr:_ (store_dir, context_dir) store
             ~context_dir
             ~chain_name
             ~snapshot_path
+            ~on_disk:false
+            ~progress_display_mode:Animation.Auto
             genesis
         in
         let* () =
@@ -214,8 +218,12 @@ let test_from_snapshot ~descr:_ (store_dir, context_dir) store
             ~dst_store_dir
             ~dst_context_dir
             ~chain_name
+            ~configured_history_mode:None
             ~user_activated_upgrades:[]
             ~user_activated_protocol_overrides:[]
+            ~operation_metadata_size_limit:None
+            ~in_memory:true
+            ~progress_display_mode:Animation.Auto
             genesis
         in
         let* () =
@@ -226,6 +234,8 @@ let test_from_snapshot ~descr:_ (store_dir, context_dir) store
             genesis
             ~user_activated_upgrades:[]
             ~user_activated_protocol_overrides:[]
+            ~operation_metadata_size_limit:None
+            ~progress_display_mode:Animation.Auto
         in
         return_false)
       ~on_error:(function

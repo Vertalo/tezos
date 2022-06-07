@@ -55,13 +55,13 @@ let testable_string_list_ignoring_order : string list Alcotest.testable =
     include StringListTestable
 
     let equal v1 v2 =
-      TzString.Set.equal (TzString.Set.of_list v1) (TzString.Set.of_list v2)
+      String.Set.equal (String.Set.of_list v1) (String.Set.of_list v2)
   end in
   (module M)
 
 (** Validate SK and PK consistency *)
 let validate_key (_, pk_hash, pk_sig_opt, sk_uri_opt) =
-  let open Lwt_tzresult_syntax in
+  let open Lwt_result_syntax in
   match (pk_sig_opt, sk_uri_opt) with
   | (Some pk_sig, Some sk_uri) -> (
       let* (pk_hash_from_sk, pk_sig_from_sk_opt) =
@@ -126,7 +126,7 @@ let test_with_valid_bootstrap_accounts_file_populates =
     `Quick
     (fun () ->
       Lwt_utils_unix.with_tempdir "test_mockup_wallet" (fun base_dir ->
-          let open Lwt_tzresult_syntax in
+          let open Lwt_result_syntax in
           let io_wallet =
             new Client_context_unix.unix_io_wallet
               ~base_dir

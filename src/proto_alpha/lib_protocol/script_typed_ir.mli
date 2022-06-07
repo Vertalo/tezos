@@ -27,6 +27,7 @@
 
 open Alpha_context
 open Script_int
+open Dependent_bool
 
 type step_constants = {
   source : Contract.t;
@@ -77,11 +78,6 @@ type tx_rollup_l2_address = Tx_rollup_l2_address.Indexable.value
 type ('a, 'b) pair = 'a * 'b
 
 type ('a, 'b) union = L of 'a | R of 'b
-
-type operation = {
-  piop : packed_internal_operation;
-  lazy_storage_diff : Lazy_storage.diffs option;
-}
 
 module Script_chain_id : sig
   (** [t] is made algebraic in order to distinguish it from the other type
@@ -181,7 +177,7 @@ module Type_size : sig
   type 'a t
 
   val check_eq :
-    error_details:'error_trace Script_tc_errors.error_details ->
+    error_details:('error_context, 'error_trace) Script_tc_errors.error_details ->
     'a t ->
     'b t ->
     (unit, 'error_trace) result
@@ -190,84 +186,6 @@ module Type_size : sig
 end
 
 type 'a ty_metadata = {size : 'a Type_size.t} [@@unboxed]
-
-type _ comparable_ty =
-  | Unit_key : unit comparable_ty
-  | Never_key : never comparable_ty
-  | Int_key : z num comparable_ty
-  | Nat_key : n num comparable_ty
-  | Signature_key : signature comparable_ty
-  | String_key : Script_string.t comparable_ty
-  | Bytes_key : Bytes.t comparable_ty
-  | Mutez_key : Tez.t comparable_ty
-  | Bool_key : bool comparable_ty
-  | Key_hash_key : public_key_hash comparable_ty
-  | Key_key : public_key comparable_ty
-  | Timestamp_key : Script_timestamp.t comparable_ty
-  | Chain_id_key : Script_chain_id.t comparable_ty
-  | Address_key : address comparable_ty
-  | Tx_rollup_l2_address_key : tx_rollup_l2_address comparable_ty
-  | Pair_key :
-      'a comparable_ty * 'b comparable_ty * ('a, 'b) pair ty_metadata
-      -> ('a, 'b) pair comparable_ty
-  | Union_key :
-      'a comparable_ty * 'b comparable_ty * ('a, 'b) union ty_metadata
-      -> ('a, 'b) union comparable_ty
-  | Option_key :
-      'v comparable_ty * 'v option ty_metadata
-      -> 'v option comparable_ty
-
-val unit_key : unit comparable_ty
-
-val never_key : never comparable_ty
-
-val int_key : z num comparable_ty
-
-val nat_key : n num comparable_ty
-
-val signature_key : signature comparable_ty
-
-val string_key : Script_string.t comparable_ty
-
-val bytes_key : Bytes.t comparable_ty
-
-val mutez_key : Tez.t comparable_ty
-
-val bool_key : bool comparable_ty
-
-val key_hash_key : public_key_hash comparable_ty
-
-val key_key : public_key comparable_ty
-
-val timestamp_key : Script_timestamp.t comparable_ty
-
-val chain_id_key : Script_chain_id.t comparable_ty
-
-val address_key : address comparable_ty
-
-val tx_rollup_l2_address_key : tx_rollup_l2_address comparable_ty
-
-val pair_key :
-  Script.location ->
-  'a comparable_ty ->
-  'b comparable_ty ->
-  ('a, 'b) pair comparable_ty tzresult
-
-val pair_3_key :
-  Script.location ->
-  'a comparable_ty ->
-  'b comparable_ty ->
-  'c comparable_ty ->
-  ('a, ('b, 'c) pair) pair comparable_ty tzresult
-
-val union_key :
-  Script.location ->
-  'a comparable_ty ->
-  'b comparable_ty ->
-  ('a, 'b) union comparable_ty tzresult
-
-val option_key :
-  Script.location -> 'v comparable_ty -> 'v option comparable_ty tzresult
 
 module type Boxed_set_OPS = sig
   type t
@@ -361,39 +279,49 @@ type view = {
 
 type view_map = (Script_string.t, view) map
 
+type entrypoint_info = {name : Entrypoint.t; original_type_expr : Script.node}
+
 (** ['arg entrypoints] represents the tree of entrypoints of a parameter type
     ['arg].
-    [name] is the name of the entrypoint at that node if it is not [None].
+    [at_node] are entrypoint details at that node if it is not [None].
     [nested] are the entrypoints below the node in the tree.
       It is always [Entrypoints_None] for non-union nodes.
       But it is also ok to have [Entrypoints_None] for a union node, it just
       means that there are no entrypoints below that node in the tree.
 *)
-type 'arg entrypoints = {
-  name : Entrypoint.t option;
+type 'arg entrypoints_node = {
+  at_node : entrypoint_info option;
   nested : 'arg nested_entrypoints;
 }
 
 and 'arg nested_entrypoints =
   | Entrypoints_Union : {
-      left : 'l entrypoints;
-      right : 'r entrypoints;
+      left : 'l entrypoints_node;
+      right : 'r entrypoints_node;
     }
       -> ('l, 'r) union nested_entrypoints
   | Entrypoints_None : _ nested_entrypoints
 
-(** [no_entrypoints] is [{name = None; nested = Entrypoints_None}] *)
-val no_entrypoints : _ entrypoints
+(** [no_entrypoints] is [{at_node = None; nested = Entrypoints_None}] *)
+val no_entrypoints : _ entrypoints_node
 
-type ('arg, 'storage) script = {
-  code : (('arg, 'storage) pair, (operation boxed_list, 'storage) pair) lambda;
-  arg_type : 'arg ty;
-  storage : 'storage;
-  storage_type : 'storage ty;
-  views : view_map;
-  entrypoints : 'arg entrypoints;
-  code_size : Cache_memory_helpers.sint;
+type 'arg entrypoints = {
+  root : 'arg entrypoints_node;
+  original_type_expr : Script.node;
 }
+
+type ('arg, 'storage) script =
+  | Script : {
+      code :
+        (('arg, 'storage) pair, (operation boxed_list, 'storage) pair) lambda;
+      arg_type : ('arg, _) ty;
+      storage : 'storage;
+      storage_type : ('storage, _) ty;
+      views : view_map;
+      entrypoints : 'arg entrypoints;
+      code_size : Cache_memory_helpers.sint;
+    }
+      -> ('arg, 'storage) script
 
 (* ---- Instructions --------------------------------------------------------*)
 
@@ -661,7 +589,7 @@ and ('before_top, 'before, 'result_top, 'result) kinstr =
   | IEmpty_big_map :
       ('a, 's) kinfo
       * 'b comparable_ty
-      * 'c ty
+      * ('c, _) ty
       * (('b, 'c) big_map, 'a * 's, 'r, 'f) kinstr
       -> ('a, 's, 'r, 'f) kinstr
   | IBig_map_mem :
@@ -867,7 +795,7 @@ and ('before_top, 'before, 'result_top, 'result) kinstr =
       -> ('a, ('a, 'b) lambda * 's, 'r, 'f) kinstr
   | IApply :
       ('a, ('a * 'b, 'c) lambda * 's) kinfo
-      * 'a ty
+      * ('a, _) ty
       * (('b, 'c) lambda, 's, 'r, 'f) kinstr
       -> ('a, ('a * 'b, 'c) lambda * 's, 'r, 'f) kinstr
   | ILambda :
@@ -876,7 +804,7 @@ and ('before_top, 'before, 'result_top, 'result) kinstr =
       * (('b, 'c) lambda, 'a * 's, 'r, 'f) kinstr
       -> ('a, 's, 'r, 'f) kinstr
   | IFailwith :
-      ('a, 's) kinfo * Script.location * 'a ty
+      ('a, 's) kinfo * Script.location * ('a, _) ty
       -> ('a, 's, 'r, 'f) kinstr
   (*
      Comparison
@@ -916,7 +844,7 @@ and ('before_top, 'before, 'result_top, 'result) kinstr =
       -> ('a typed_contract, 's, 'r, 'f) kinstr
   | IContract :
       (address, 's) kinfo
-      * 'a ty
+      * ('a, _) ty
       * Entrypoint.t
       * ('a typed_contract option, 's, 'r, 'f) kinstr
       -> (address, 's, 'r, 'f) kinstr
@@ -934,11 +862,8 @@ and ('before_top, 'before, 'result_top, 'result) kinstr =
       -> (public_key_hash, 's, 'r, 'f) kinstr
   | ICreate_contract : {
       kinfo : (public_key_hash option, Tez.t * ('a * 's)) kinfo;
-      storage_type : 'a ty;
-      arg_type : 'b ty;
-      lambda : ('b * 'a, operation boxed_list * 'a) lambda;
-      views : view_map;
-      entrypoints : 'b entrypoints;
+      storage_type : ('a, _) ty;
+      code : Script.expr;
       k : (operation, address * 's, 'r, 'f) kinstr;
     }
       -> (public_key_hash option, Tez.t * ('a * 's), 'r, 'f) kinstr
@@ -964,10 +889,10 @@ and ('before_top, 'before, 'result_top, 'result) kinstr =
       (public_key, 's) kinfo * (public_key_hash, 's, 'r, 'f) kinstr
       -> (public_key, 's, 'r, 'f) kinstr
   | IPack :
-      ('a, 's) kinfo * 'a ty * (bytes, 's, 'r, 'f) kinstr
+      ('a, 's) kinfo * ('a, _) ty * (bytes, 's, 'r, 'f) kinstr
       -> ('a, 's, 'r, 'f) kinstr
   | IUnpack :
-      (bytes, 's) kinfo * 'a ty * ('a option, 's, 'r, 'f) kinstr
+      (bytes, 's) kinfo * ('a, _) ty * ('a option, 's, 'r, 'f) kinstr
       -> (bytes, 's, 'r, 'f) kinstr
   | IBlake2b :
       (bytes, 's) kinfo * (bytes, 's, 'r, 'f) kinstr
@@ -986,7 +911,7 @@ and ('before_top, 'before, 'result_top, 'result) kinstr =
       -> ('a, 's, 'r, 'f) kinstr
   | ISelf :
       ('a, 's) kinfo
-      * 'b ty
+      * ('b, _) ty
       * Entrypoint.t
       * ('b typed_contract, 'a * 's, 'r, 'f) kinstr
       -> ('a, 's, 'r, 'f) kinstr
@@ -1003,8 +928,13 @@ and ('before_top, 'before, 'result_top, 'result) kinstr =
       -> ('a, 's, 'b, 'f) kinstr
   | ISapling_verify_update :
       (Sapling.transaction, Sapling.state * 's) kinfo
-      * ((z num, Sapling.state) pair option, 's, 'r, 'f) kinstr
+      * ((bytes, (z num, Sapling.state) pair) pair option, 's, 'r, 'f) kinstr
       -> (Sapling.transaction, Sapling.state * 's, 'r, 'f) kinstr
+  | ISapling_verify_update_deprecated :
+      (* legacy introduced in J *)
+      (Sapling.Legacy.transaction, Sapling.state * 's) kinfo
+      * ((z num, Sapling.state) pair option, 's, 'r, 'f) kinstr
+      -> (Sapling.Legacy.transaction, Sapling.state * 's, 'r, 'f) kinstr
   | IDig :
       ('a, 's) kinfo
       (*
@@ -1211,7 +1141,12 @@ and ('arg, 'ret) lambda =
       -> ('arg, 'ret) lambda
 [@@coq_force_gadt]
 
-and 'arg typed_contract = {arg_ty : 'arg ty; address : address}
+and 'arg typed_contract =
+  | Typed_contract : {
+      arg_ty : ('arg, _) ty;
+      address : address;
+    }
+      -> 'arg typed_contract
 
 (*
 
@@ -1385,59 +1320,80 @@ and logger = {
 }
 
 (* ---- Auxiliary types -----------------------------------------------------*)
-and 'ty ty =
-  | Unit_t : unit ty
-  | Int_t : z num ty
-  | Nat_t : n num ty
-  | Signature_t : signature ty
-  | String_t : Script_string.t ty
-  | Bytes_t : bytes ty
-  | Mutez_t : Tez.t ty
-  | Key_hash_t : public_key_hash ty
-  | Key_t : public_key ty
-  | Timestamp_t : Script_timestamp.t ty
-  | Address_t : address ty
-  | Tx_rollup_l2_address_t : tx_rollup_l2_address ty
-  | Bool_t : bool ty
-  | Pair_t : 'a ty * 'b ty * ('a, 'b) pair ty_metadata -> ('a, 'b) pair ty
-  | Union_t : 'a ty * 'b ty * ('a, 'b) union ty_metadata -> ('a, 'b) union ty
+and ('ty, 'comparable) ty =
+  | Unit_t : (unit, yes) ty
+  | Int_t : (z num, yes) ty
+  | Nat_t : (n num, yes) ty
+  | Signature_t : (signature, yes) ty
+  | String_t : (Script_string.t, yes) ty
+  | Bytes_t : (bytes, yes) ty
+  | Mutez_t : (Tez.t, yes) ty
+  | Key_hash_t : (public_key_hash, yes) ty
+  | Key_t : (public_key, yes) ty
+  | Timestamp_t : (Script_timestamp.t, yes) ty
+  | Address_t : (address, yes) ty
+  | Tx_rollup_l2_address_t : (tx_rollup_l2_address, yes) ty
+  | Bool_t : (bool, yes) ty
+  | Pair_t :
+      ('a, 'ac) ty
+      * ('b, 'bc) ty
+      * ('a, 'b) pair ty_metadata
+      * ('ac, 'bc, 'rc) dand
+      -> (('a, 'b) pair, 'rc) ty
+  | Union_t :
+      ('a, 'ac) ty
+      * ('b, 'bc) ty
+      * ('a, 'b) union ty_metadata
+      * ('ac, 'bc, 'rc) dand
+      -> (('a, 'b) union, 'rc) ty
   | Lambda_t :
-      'arg ty * 'ret ty * ('arg, 'ret) lambda ty_metadata
-      -> ('arg, 'ret) lambda ty
-  | Option_t : 'v ty * 'v option ty_metadata -> 'v option ty
-  | List_t : 'v ty * 'v boxed_list ty_metadata -> 'v boxed_list ty
-  | Set_t : 'v comparable_ty * 'v set ty_metadata -> 'v set ty
+      ('arg, _) ty * ('ret, _) ty * ('arg, 'ret) lambda ty_metadata
+      -> (('arg, 'ret) lambda, no) ty
+  | Option_t :
+      ('v, 'c) ty * 'v option ty_metadata * 'c dbool
+      -> ('v option, 'c) ty
+  | List_t : ('v, _) ty * 'v boxed_list ty_metadata -> ('v boxed_list, no) ty
+  | Set_t : 'v comparable_ty * 'v set ty_metadata -> ('v set, no) ty
   | Map_t :
-      'k comparable_ty * 'v ty * ('k, 'v) map ty_metadata
-      -> ('k, 'v) map ty
+      'k comparable_ty * ('v, _) ty * ('k, 'v) map ty_metadata
+      -> (('k, 'v) map, no) ty
   | Big_map_t :
-      'k comparable_ty * 'v ty * ('k, 'v) big_map ty_metadata
-      -> ('k, 'v) big_map ty
+      'k comparable_ty * ('v, _) ty * ('k, 'v) big_map ty_metadata
+      -> (('k, 'v) big_map, no) ty
   | Contract_t :
-      'arg ty * 'arg typed_contract ty_metadata
-      -> 'arg typed_contract ty
-  | Sapling_transaction_t : Sapling.Memo_size.t -> Sapling.transaction ty
-  | Sapling_state_t : Sapling.Memo_size.t -> Sapling.state ty
-  | Operation_t : operation ty
-  | Chain_id_t : Script_chain_id.t ty
-  | Never_t : never ty
-  | Bls12_381_g1_t : Script_bls.G1.t ty
-  | Bls12_381_g2_t : Script_bls.G2.t ty
-  | Bls12_381_fr_t : Script_bls.Fr.t ty
-  | Ticket_t : 'a comparable_ty * 'a ticket ty_metadata -> 'a ticket ty
-  | Chest_key_t : Script_timelock.chest_key ty
-  | Chest_t : Script_timelock.chest ty
+      ('arg, _) ty * 'arg typed_contract ty_metadata
+      -> ('arg typed_contract, no) ty
+  | Sapling_transaction_t : Sapling.Memo_size.t -> (Sapling.transaction, no) ty
+  | Sapling_transaction_deprecated_t :
+      Sapling.Memo_size.t
+      -> (Sapling.Legacy.transaction, no) ty
+  | Sapling_state_t : Sapling.Memo_size.t -> (Sapling.state, no) ty
+  | Operation_t : (operation, no) ty
+  | Chain_id_t : (Script_chain_id.t, yes) ty
+  | Never_t : (never, yes) ty
+  | Bls12_381_g1_t : (Script_bls.G1.t, no) ty
+  | Bls12_381_g2_t : (Script_bls.G2.t, no) ty
+  | Bls12_381_fr_t : (Script_bls.Fr.t, no) ty
+  | Ticket_t : 'a comparable_ty * 'a ticket ty_metadata -> ('a ticket, no) ty
+  | Chest_key_t : (Script_timelock.chest_key, no) ty
+  | Chest_t : (Script_timelock.chest, no) ty
+
+and 'ty comparable_ty = ('ty, yes) ty
 
 and ('top_ty, 'resty) stack_ty =
-  | Item_t : 'ty ty * ('ty2, 'rest) stack_ty -> ('ty, 'ty2 * 'rest) stack_ty
+  | Item_t :
+      ('ty, _) ty * ('ty2, 'rest) stack_ty
+      -> ('ty, 'ty2 * 'rest) stack_ty
   | Bot_t : (empty_cell, empty_cell) stack_ty
 
-and ('key, 'value) big_map = {
-  id : Big_map.Id.t option;
-  diff : ('key, 'value) big_map_overlay;
-  key_type : 'key comparable_ty;
-  value_type : 'value ty;
-}
+and ('key, 'value) big_map =
+  | Big_map : {
+      id : Big_map.Id.t option;
+      diff : ('key, 'value) big_map_overlay;
+      key_type : 'key comparable_ty;
+      value_type : ('value, _) ty;
+    }
+      -> ('key, 'value) big_map
 
 and ('a, 's, 'r, 'f) kdescr = {
   kloc : Script.location;
@@ -1530,12 +1486,58 @@ and (_, _) dup_n_gadt_witness =
       ('stack, 'b) dup_n_gadt_witness
       -> ('a * 'stack, 'b) dup_n_gadt_witness
 
-and ('a, 'b) view_signature =
-  | View_signature of {
+and ('input, 'output) view_signature =
+  | View_signature : {
       name : Script_string.t;
-      input_ty : 'a ty;
-      output_ty : 'b ty;
+      input_ty : ('input, _) ty;
+      output_ty : ('output, _) ty;
     }
+      -> ('input, 'output) view_signature
+
+and 'kind manager_operation =
+  | Transaction : {
+      (* The [transaction.parameters] field may seem useless since we have
+         access to a typed version of the field (with [parameters_ty] and
+         [parameters]), but we keep it so that we do not have to unparse the
+         typed version in order to produce the receipt
+         ([Apply_results.internal_manager_operation]). *)
+      transaction : Alpha_context.transaction;
+      location : Script.location;
+      parameters_ty : ('a, _) ty;
+      parameters : 'a;
+    }
+      -> Kind.transaction manager_operation
+  | Origination : {
+      origination : Alpha_context.origination;
+      preorigination : Contract.t;
+      storage_type : ('storage, _) ty;
+      storage : 'storage;
+    }
+      -> Kind.origination manager_operation
+  | Delegation :
+      Signature.Public_key_hash.t option
+      -> Kind.delegation manager_operation
+
+and 'kind internal_operation = {
+  source : Contract.contract;
+  operation : 'kind manager_operation;
+  nonce : int;
+}
+
+and packed_internal_operation =
+  | Internal_operation : 'kind internal_operation -> packed_internal_operation
+[@@ocaml.unboxed]
+
+and operation = {
+  piop : packed_internal_operation;
+  lazy_storage_diff : Lazy_storage.diffs option;
+}
+
+type packed_manager_operation =
+  | Manager : 'kind manager_operation -> packed_manager_operation
+[@@ocaml.unboxed]
+
+val manager_kind : 'kind manager_operation -> 'kind Kind.manager
 
 val kinfo_of_kinstr : ('a, 's, 'b, 'f) kinstr -> ('a, 's) kinfo
 
@@ -1546,107 +1548,147 @@ type kinstr_rewritek = {
 val kinstr_rewritek :
   ('a, 's, 'r, 'f) kinstr -> kinstr_rewritek -> ('a, 's, 'r, 'f) kinstr
 
-val ty_size : 'a ty -> 'a Type_size.t
+val ty_size : ('a, _) ty -> 'a Type_size.t
 
-val comparable_ty_size : 'a comparable_ty -> 'a Type_size.t
+val is_comparable : ('v, 'c) ty -> 'c dbool
 
-val unit_t : unit ty
+type 'v ty_ex_c = Ty_ex_c : ('v, _) ty -> 'v ty_ex_c [@@ocaml.unboxed]
 
-val int_t : z num ty
+val unit_t : unit comparable_ty
 
-val nat_t : n num ty
+val int_t : z num comparable_ty
 
-val signature_t : signature ty
+val nat_t : n num comparable_ty
 
-val string_t : Script_string.t ty
+val signature_t : signature comparable_ty
 
-val bytes_t : Bytes.t ty
+val string_t : Script_string.t comparable_ty
 
-val mutez_t : Tez.t ty
+val bytes_t : Bytes.t comparable_ty
 
-val key_hash_t : public_key_hash ty
+val mutez_t : Tez.t comparable_ty
 
-val key_t : public_key ty
+val key_hash_t : public_key_hash comparable_ty
 
-val timestamp_t : Script_timestamp.t ty
+val key_t : public_key comparable_ty
 
-val address_t : address ty
+val timestamp_t : Script_timestamp.t comparable_ty
 
-val tx_rollup_l2_address_t : tx_rollup_l2_address ty
+val address_t : address comparable_ty
 
-val bool_t : bool ty
+val tx_rollup_l2_address_t : tx_rollup_l2_address comparable_ty
 
-val pair_t : Script.location -> 'a ty -> 'b ty -> ('a, 'b) pair ty tzresult
+val bool_t : bool comparable_ty
 
-val union_t : Script.location -> 'a ty -> 'b ty -> ('a, 'b) union ty tzresult
+val pair_t :
+  Script.location -> ('a, _) ty -> ('b, _) ty -> ('a, 'b) pair ty_ex_c tzresult
 
-val union_bytes_bool_t : (Bytes.t, bool) union ty
+val comparable_pair_t :
+  Script.location ->
+  'a comparable_ty ->
+  'b comparable_ty ->
+  ('a, 'b) pair comparable_ty tzresult
+
+val comparable_pair_3_t :
+  Script.location ->
+  'a comparable_ty ->
+  'b comparable_ty ->
+  'c comparable_ty ->
+  ('a, ('b, 'c) pair) pair comparable_ty tzresult
+
+val union_t :
+  Script.location -> ('a, _) ty -> ('b, _) ty -> ('a, 'b) union ty_ex_c tzresult
+
+val comparable_union_t :
+  Script.location ->
+  'a comparable_ty ->
+  'b comparable_ty ->
+  ('a, 'b) union comparable_ty tzresult
+
+val union_bytes_bool_t : (Bytes.t, bool) union comparable_ty
 
 val lambda_t :
-  Script.location -> 'arg ty -> 'ret ty -> ('arg, 'ret) lambda ty tzresult
+  Script.location ->
+  ('arg, _) ty ->
+  ('ret, _) ty ->
+  (('arg, 'ret) lambda, no) ty tzresult
 
-val option_t : Script.location -> 'v ty -> 'v option ty tzresult
+val option_t : Script.location -> ('v, 'c) ty -> ('v option, 'c) ty tzresult
 
-val option_mutez_t : Tez.t option ty
+val comparable_option_t :
+  Script.location -> 'v comparable_ty -> 'v option comparable_ty tzresult
 
-val option_string_t : Script_string.t option ty
+val option_mutez_t : Tez.t option comparable_ty
 
-val option_bytes_t : Bytes.t option ty
+val option_string_t : Script_string.t option comparable_ty
 
-val option_nat_t : n num option ty
+val option_bytes_t : Bytes.t option comparable_ty
 
-val option_pair_nat_nat_t : (n num, n num) pair option ty
+val option_nat_t : n num option comparable_ty
 
-val option_pair_nat_mutez_t : (n num, Tez.t) pair option ty
+val option_pair_nat_nat_t : (n num, n num) pair option comparable_ty
 
-val option_pair_mutez_mutez_t : (Tez.t, Tez.t) pair option ty
+val option_pair_nat_mutez_t : (n num, Tez.t) pair option comparable_ty
 
-val option_pair_int_nat_t : (z num, n num) pair option ty
+val option_pair_mutez_mutez_t : (Tez.t, Tez.t) pair option comparable_ty
 
-val list_t : Script.location -> 'v ty -> 'v boxed_list ty tzresult
+val option_pair_int_nat_t : (z num, n num) pair option comparable_ty
 
-val list_operation_t : operation boxed_list ty
+val list_t : Script.location -> ('v, _) ty -> ('v boxed_list, no) ty tzresult
 
-val set_t : Script.location -> 'v comparable_ty -> 'v set ty tzresult
+val list_operation_t : (operation boxed_list, no) ty
+
+val set_t : Script.location -> 'v comparable_ty -> ('v set, no) ty tzresult
 
 val map_t :
-  Script.location -> 'k comparable_ty -> 'v ty -> ('k, 'v) map ty tzresult
+  Script.location ->
+  'k comparable_ty ->
+  ('v, _) ty ->
+  (('k, 'v) map, no) ty tzresult
 
 val big_map_t :
-  Script.location -> 'k comparable_ty -> 'v ty -> ('k, 'v) big_map ty tzresult
+  Script.location ->
+  'k comparable_ty ->
+  ('v, _) ty ->
+  (('k, 'v) big_map, no) ty tzresult
 
-val contract_t : Script.location -> 'arg ty -> 'arg typed_contract ty tzresult
+val contract_t :
+  Script.location -> ('arg, _) ty -> ('arg typed_contract, no) ty tzresult
 
-val contract_unit_t : unit typed_contract ty
+val contract_unit_t : (unit typed_contract, no) ty
 
 val sapling_transaction_t :
-  memo_size:Sapling.Memo_size.t -> Sapling.transaction ty
+  memo_size:Sapling.Memo_size.t -> (Sapling.transaction, no) ty
 
-val sapling_state_t : memo_size:Sapling.Memo_size.t -> Sapling.state ty
+val sapling_transaction_deprecated_t :
+  memo_size:Sapling.Memo_size.t -> (Sapling.Legacy.transaction, no) ty
 
-val operation_t : operation ty
+val sapling_state_t : memo_size:Sapling.Memo_size.t -> (Sapling.state, no) ty
 
-val chain_id_t : Script_chain_id.t ty
+val operation_t : (operation, no) ty
 
-val never_t : never ty
+val chain_id_t : Script_chain_id.t comparable_ty
 
-val bls12_381_g1_t : Script_bls.G1.t ty
+val never_t : never comparable_ty
 
-val bls12_381_g2_t : Script_bls.G2.t ty
+val bls12_381_g1_t : (Script_bls.G1.t, no) ty
 
-val bls12_381_fr_t : Script_bls.Fr.t ty
+val bls12_381_g2_t : (Script_bls.G2.t, no) ty
 
-val ticket_t : Script.location -> 'a comparable_ty -> 'a ticket ty tzresult
+val bls12_381_fr_t : (Script_bls.Fr.t, no) ty
 
-val chest_key_t : Script_timelock.chest_key ty
+val ticket_t :
+  Script.location -> 'a comparable_ty -> ('a ticket, no) ty tzresult
 
-val chest_t : Script_timelock.chest ty
+val chest_key_t : (Script_timelock.chest_key, no) ty
+
+val chest_t : (Script_timelock.chest, no) ty
 
 (**
 
-   The following functions named `X_traverse` for X in { kinstr, ty,
-   comparable_ty, value } provide tail recursive top down traversals
-   over the values of these types.
+   The following functions named `X_traverse` for X in
+   [{ kinstr, ty, comparable_ty, value }] provide tail recursive top down
+   traversals over the values of these types.
 
    The traversal goes through a value and rewrites an accumulator
    along the way starting from some [init]ial value for the
@@ -1668,14 +1710,9 @@ type 'a kinstr_traverse = {
 val kinstr_traverse :
   ('a, 'b, 'c, 'd) kinstr -> 'ret -> 'ret kinstr_traverse -> 'ret
 
-type 'a ty_traverse = {
-  apply : 't. 'a -> 't ty -> 'a;
-  apply_comparable : 't. 'a -> 't comparable_ty -> 'a;
-}
+type 'a ty_traverse = {apply : 't 'tc. 'a -> ('t, 'tc) ty -> 'a}
 
-val comparable_ty_traverse : 'a comparable_ty -> 'r -> 'r ty_traverse -> 'r
-
-val ty_traverse : 'a ty -> 'r -> 'r ty_traverse -> 'r
+val ty_traverse : ('a, _) ty -> 'r -> 'r ty_traverse -> 'r
 
 type 'accu stack_ty_traverse = {
   apply : 'ty 's. 'accu -> ('ty, 's) stack_ty -> 'accu;
@@ -1683,12 +1720,8 @@ type 'accu stack_ty_traverse = {
 
 val stack_ty_traverse : ('a, 's) stack_ty -> 'r -> 'r stack_ty_traverse -> 'r
 
-type 'a value_traverse = {
-  apply : 't. 'a -> 't ty -> 't -> 'a;
-  apply_comparable : 't. 'a -> 't comparable_ty -> 't -> 'a;
-}
+type 'a value_traverse = {apply : 't 'tc. 'a -> ('t, 'tc) ty -> 't -> 'a}
 
-val value_traverse :
-  ('t ty, 't comparable_ty) union -> 't -> 'r -> 'r value_traverse -> 'r
+val value_traverse : ('t, _) ty -> 't -> 'r -> 'r value_traverse -> 'r
 
-val stack_top_ty : ('a, 'b * 's) stack_ty -> 'a ty
+val stack_top_ty : ('a, 'b * 's) stack_ty -> 'a ty_ex_c

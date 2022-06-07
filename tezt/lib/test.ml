@@ -512,12 +512,7 @@ module Record = struct
     JSON.(json |> as_list |> List.map decode_test)
 
   let output_file (record : t) filename =
-    (* Write to file using Marshal.
-       This is not very robust but enough for the purposes of this file. *)
-    try
-      with_open_out filename @@ fun file ->
-      output_string file (JSON.encode_u (encode record))
-    with Sys_error error -> Log.warn "Failed to write record: %s" error
+    JSON.encode_to_file_u filename (encode record)
 
   let input_file filename : t =
     try decode (JSON.parse_file filename)
@@ -662,7 +657,7 @@ let suggest_jobs () =
             (fun test ->
               Printf.sprintf
                 "%s %s"
-                (if negate then "--not-test" else "--test")
+                (if negate then "--not-title" else "--title")
                 (Log.quote_shell (test : test).title))
             job_tests)
       ^ " # "
@@ -1043,7 +1038,7 @@ let run () =
   List.iter (fun f -> f ()) !before_test_run_functions ;
   (* Check command-line options. *)
   check_existence "--file" known_files Cli.options.files_to_run ;
-  check_existence "--test" known_titles Cli.options.tests_to_run ;
+  check_existence "--title" known_titles Cli.options.tests_to_run ;
   check_existence
     "tag"
     known_tags
@@ -1058,7 +1053,7 @@ let run () =
             (fun x -> "--file " ^ Log.quote_shell x)
             Cli.options.files_to_run
          @ List.map
-             (fun x -> "--test " ^ Log.quote_shell x)
+             (fun x -> "--title " ^ Log.quote_shell x)
              Cli.options.tests_to_run
          @ Cli.options.tags_to_run
          @ List.map (sf "/%s") Cli.options.tags_not_to_run)) ;
@@ -1139,8 +1134,9 @@ let run () =
                       test.session_successful_runs + single_seconds time)
               | Failed _ ->
                   Log.report
-                    "Try again with: %s --verbose --test %s"
+                    "Try again with: %s --verbose --file %s --title %s"
                     Sys.argv.(0)
+                    (Log.quote_shell test.file)
                     (Log.quote_shell test.title) ;
                   test.session_failed_runs <-
                     Summed_durations.(

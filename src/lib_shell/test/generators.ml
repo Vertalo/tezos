@@ -61,8 +61,9 @@ let operation_gen ?(proto_gen = operation_proto_gen) ?block_hash_t () :
     Operation.t QCheck2.Gen.t =
   let open QCheck2.Gen in
   let prod_block_hash_gen = Option.value ~default:block_hash_gen block_hash_t in
-  let+ branch = prod_block_hash_gen
-  and+ proto = proto_gen >|= Bytes.of_string in
+  let* branch = prod_block_hash_gen in
+  let+ proto = proto_gen in
+  let proto = Bytes.of_string proto in
   Operation.{shell = {branch}; proto}
 
 (** Like {!operation_gen} with a hash. *)
@@ -214,20 +215,21 @@ let parameters_gen : parameters QCheck2.Gen.t =
   let on_discarded_operation _ = () in
   {map_size_limit; on_discarded_operation}
 
-let t_gen ?(can_be_full = true) () : unit t QCheck2.Gen.t =
+let t_gen_ ~can_be_full : unit t QCheck2.Gen.t =
   let open QCheck2.Gen in
   let* parameters = parameters_gen in
+  let limit = parameters.map_size_limit - if can_be_full then 0 else 1 in
+  let* size = 0 -- limit in
   let+ inputs =
-    let limit = parameters.map_size_limit - if can_be_full then 0 else 1 in
-    list_size
-      (0 -- limit)
-      (pair classification_gen (operation_with_hash_gen ()))
+    list_repeat size (pair classification_gen (operation_with_hash_gen ()))
   in
   let t = Prevalidator_classification.create parameters in
   List.iter
     (fun (classification, op) -> add_if_not_present classification op t)
     inputs ;
   t
+
+let t_gen = t_gen_ ~can_be_full:true
 
 (* With probability 1/2, we take an operation hash already present in the
    classification. This operation is taken uniformly among the
@@ -258,15 +260,15 @@ let with_t_operation_gen : unit t -> unit Prevalidation.operation QCheck2.Gen.t
     let freq_fresh t =
       max
         1
-        (freq_of_list t.applied_rev + freq_of_map t.prechecked
+        (freq_of_list t.applied_rev
+        + freq_of_map (Sized_map.to_map t.prechecked)
         + freq_of_map (Classification.map t.branch_refused)
         + freq_of_map (Classification.map t.branch_delayed)
         + freq_of_map (Classification.map t.refused)
         + freq_of_map (Classification.map t.outdated))
     in
     freq_and_gen_of_list t.applied_rev
-    @ freq_and_gen_of_list
-        (List.map snd (Operation_hash.Map.bindings t.prechecked))
+    @ freq_and_gen_of_list (List.map snd (Sized_map.bindings t.prechecked))
     @ freq_and_gen_of_map (Classification.map t.branch_refused)
     @ freq_and_gen_of_map (Classification.map t.branch_delayed)
     @ freq_and_gen_of_map (Classification.map t.refused)
@@ -274,7 +276,13 @@ let with_t_operation_gen : unit t -> unit Prevalidation.operation QCheck2.Gen.t
     @ [(freq_fresh t, operation_with_hash_gen ())]
     |> Gen.frequency
 
-let t_with_operation_gen ?can_be_full () :
+let t_with_operation_gen_ ~can_be_full :
     (unit t * unit Prevalidation.operation) QCheck2.Gen.t =
   let open QCheck2.Gen in
-  t_gen ?can_be_full () >>= fun t -> pair (return t) (with_t_operation_gen t)
+  let* t = t_gen_ ~can_be_full in
+  pair (return t) (with_t_operation_gen t)
+
+let t_with_operation_gen = t_with_operation_gen_ ~can_be_full:true
+
+let t_with_operation_gen__cant_be_full =
+  t_with_operation_gen_ ~can_be_full:false

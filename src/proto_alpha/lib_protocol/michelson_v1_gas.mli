@@ -24,6 +24,11 @@
 (*                                                                           *)
 (*****************************************************************************)
 
+(** This module provides the gas costs for typechecking Michelson scripts,
+    parsing and unparsing Michelson values, and interpreting Michelson
+    instructions.
+*)
+
 open Alpha_context
 
 module Cost_of : sig
@@ -148,7 +153,7 @@ module Cost_of : sig
 
     val is_nat : Gas.cost
 
-    val abs_int : Alpha_context.Script_int.z Script_int.num -> Gas.cost
+    val abs_int : Script_int.z Script_int.num -> Gas.cost
 
     val int_nat : Gas.cost
 
@@ -157,16 +162,13 @@ module Cost_of : sig
     val add_int : 'a Script_int.num -> 'b Script_int.num -> Gas.cost
 
     val add_nat :
-      Alpha_context.Script_int.n Script_int.num ->
-      Alpha_context.Script_int.n Script_int.num ->
-      Gas.cost
+      Script_int.n Script_int.num -> Script_int.n Script_int.num -> Gas.cost
 
     val sub_int : 'a Script_int.num -> 'b Script_int.num -> Gas.cost
 
     val mul_int : 'a Script_int.num -> 'b Script_int.num -> Gas.cost
 
-    val mul_nat :
-      Alpha_context.Script_int.n Script_int.num -> 'a Script_int.num -> Gas.cost
+    val mul_nat : Script_int.n Script_int.num -> 'a Script_int.num -> Gas.cost
 
     val ediv_teznat : 'a -> 'b Script_int.num -> Gas.cost
 
@@ -174,8 +176,7 @@ module Cost_of : sig
 
     val ediv_int : 'a Script_int.num -> 'b Script_int.num -> Gas.cost
 
-    val ediv_nat :
-      Alpha_context.Script_int.n Script_int.num -> 'a Script_int.num -> Gas.cost
+    val ediv_nat : Script_int.n Script_int.num -> 'a Script_int.num -> Gas.cost
 
     val eq : Gas.cost
 
@@ -188,9 +189,7 @@ module Cost_of : sig
     val and_nat : 'a Script_int.num -> 'b Script_int.num -> Gas.cost
 
     val and_int_nat :
-      Alpha_context.Script_int.z Script_int.num ->
-      Alpha_context.Script_int.n Script_int.num ->
-      Gas.cost
+      Script_int.z Script_int.num -> Script_int.n Script_int.num -> Gas.cost
 
     val xor_nat : 'a Script_int.num -> 'b Script_int.num -> Gas.cost
 
@@ -342,7 +341,10 @@ module Cost_of : sig
 
     val sapling_empty_state : Gas.cost
 
-    val sapling_verify_update : inputs:int -> outputs:int -> Gas.cost
+    val sapling_verify_update :
+      inputs:int -> outputs:int -> bound_data:int -> Gas.cost
+
+    val sapling_verify_update_deprecated : inputs:int -> outputs:int -> Gas.cost
 
     val ticket : Gas.cost
 
@@ -428,8 +430,6 @@ module Cost_of : sig
 
     val parse_data_cycle : Gas.cost
 
-    val comparable_ty_of_ty_cycle : Gas.cost
-
     val check_dupable_cycle : Gas.cost
 
     val find_entrypoint_cycle : Gas.cost
@@ -438,9 +438,7 @@ module Cost_of : sig
 
     val unit : Gas.cost
 
-    val timestamp_readable : Gas.cost
-
-    val contract : Gas.cost
+    val timestamp_readable : string -> Gas.cost
 
     val tx_rollup_l2_address : Gas.cost
 
@@ -484,27 +482,21 @@ module Cost_of : sig
 
     val bls12_381_fr : Gas.cost
 
-    val unparse_type : 'a Script_typed_ir.ty -> Gas.cost
-
-    val unparse_comparable_type : 'a Script_typed_ir.comparable_ty -> Gas.cost
+    val unparse_type : ('a, _) Script_typed_ir.ty -> Gas.cost
 
     val unparse_instr_cycle : Gas.cost
 
     val unparse_data_cycle : Gas.cost
 
-    val unparse_views : Script_typed_ir.view_map -> Gas.cost
-
-    val unparse_script : Gas.cost
-
     val unit : Gas.cost
-
-    val contract : Gas.cost
 
     val tx_rollup_l2_address : Gas.cost
 
     val operation : bytes -> Gas.cost
 
     val sapling_transaction : Sapling.transaction -> Gas.cost
+
+    val sapling_transaction_deprecated : Sapling.Legacy.transaction -> Gas.cost
 
     val sapling_diff : Sapling.diff -> Gas.cost
 

@@ -60,7 +60,7 @@ open Alpha_context
           automatically.
        4. We introduce the [MACHINE_WITH_INIT] module type which is a
           superset of [MACHINE], extended with an [init] function
-          (analogous to {! Context.init}) to create an initial, mostly
+          (analogous to {! Context.init_n}) to create an initial, mostly
           blank state, and the [MachineBuilder.Make] functor that we
           can use to derive a machine with a [build] function.
        5. We construct the [ConcreteMachine], that allows to
@@ -112,7 +112,7 @@ let blocks_per_mint_tzbtc = 1L
 
 (** A timestamp “far in the future” which should not be exceeded when
     running tests. *)
-let far_future = Alpha_context.Script_timestamp.of_zint (Z.of_int 42_000)
+let far_future = Script_timestamp.of_zint (Z.of_int 42_000)
 (* Hypothesis: the tests start at timestamp 0, and 42000 is
    “big enough.” *)
 
@@ -387,7 +387,7 @@ let default_subsidy =
 
 let security_deposit = 640_000_000L
 
-(* When calling [Context.init] with a list of initial balances, the
+(* When calling [Context.init_n] with a list of initial balances, the
    sum of these balances should be equal to this constant. *)
 let total_xtz = 32_000_000_000_000L
 
@@ -728,7 +728,7 @@ module ConcreteBaseMachine :
 
   let fold_m = Environment.List.fold_left_es
 
-  let pure = Error_monad.return
+  let pure = return
 
   let get_xtz_balance contract blk =
     Context.Contract.balance (B blk) contract >>= fun x ->
@@ -859,7 +859,7 @@ module ConcreteBaseMachine :
   let init ~invariant ?subsidy accounts_balances =
     let liquidity_baking_subsidy = Option.map Tez.of_mutez_exn subsidy in
     let (n, initial_balances) = initial_xtz_repartition accounts_balances in
-    Context.init
+    Context.init_n
       n
       ~consensus_threshold:0
       ~initial_balances
@@ -871,6 +871,7 @@ module ConcreteBaseMachine :
       ~blocks_per_cycle:10_000l
       ~cycles_per_voting_period:1l
       ?liquidity_baking_subsidy
+      ()
     >>= function
     | (blk, holder :: accounts) ->
         let ctxt = Context.B blk in

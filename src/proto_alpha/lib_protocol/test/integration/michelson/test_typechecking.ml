@@ -38,7 +38,8 @@ open Error_monad_operators
 
 let wrap_error_lwt x = x >>= fun x -> Lwt.return @@ Environment.wrap_tzresult x
 
-(* Test for Script_ir_translator.unparse_script on a script declaring views. *)
+(* Test for Script_ir_translator.parse_and_unparse_script_unaccounted on a
+   script declaring views. *)
 let test_unparse_view () =
   let dummy_contract =
     "{parameter unit; storage unit; code { CAR; NIL operation; PAIR }; view \
@@ -50,28 +51,27 @@ let test_unparse_view () =
   let script =
     Script.{code = lazy_expr contract_expr; storage = lazy_expr storage_expr}
   in
-  Context.init 3 >>=? fun (b, _cs) ->
+  Context.init3 () >>=? fun (b, _cs) ->
   Incremental.begin_construction b >>=? fun v ->
   let ctx = Incremental.alpha_ctxt v in
-  Script_ir_translator.parse_script
+  Script_ir_translator.parse_and_unparse_script_unaccounted
     ctx
     ~legacy:true
     ~allow_forged_in_storage:false
+    Readable
+    ~normalize_types:true
     script
-  >>=?? fun (Ex_script script, ctx) ->
-  Script_ir_translator.unparse_script ctx Readable script
-  >>=?? fun (unparse_script, _ctx) ->
-  let aft = Data_encoding.force_bytes unparse_script.code in
+  >>=?? fun (unparsed_script, _ctx) ->
+  let aft = Data_encoding.force_bytes unparsed_script.code in
   Alcotest.(check bytes) "didn't match" bef aft |> return
 
 let test_context () =
-  Context.init ~consensus_threshold:0 3 >>=? fun (b, _cs) ->
+  Context.init3 ~consensus_threshold:0 () >>=? fun (b, _cs) ->
   Incremental.begin_construction b >>=? fun v ->
   return (Incremental.alpha_ctxt v)
 
 let test_context_with_nat_nat_big_map () =
-  Context.init 3 >>=? fun (b, contracts) ->
-  let source = WithExceptions.Option.get ~loc:__LOC__ @@ List.hd contracts in
+  Context.init3 () >>=? fun (b, (source, _c2, _c3)) ->
   Op.contract_origination (B b) source ~script:Op.dummy_script
   >>=? fun (operation, originated) ->
   Block.bake ~operation b >>=? fun b ->
@@ -160,7 +160,8 @@ let location = function
   | Seq (loc, _) ->
       loc
 
-let test_parse_ty (type exp) ctxt node (expected : exp Script_typed_ir.ty) =
+let test_parse_ty (type exp expc) ctxt node
+    (expected : (exp, expc) Script_typed_ir.ty) =
   let legacy = false in
   let allow_lazy_storage = true in
   let allow_operation = true in
@@ -178,8 +179,7 @@ let test_parse_ty (type exp) ctxt node (expected : exp Script_typed_ir.ty) =
     >>? fun (Script_ir_translator.Ex_ty actual, ctxt) ->
       Gas_monad.run ctxt
       @@ Script_ir_translator.ty_eq
-           ~error_details:Informative
-           (location node)
+           ~error_details:(Informative (location node))
            actual
            expected
       >>? fun (eq, ctxt) ->
@@ -197,54 +197,56 @@ let test_parse_comb_type () =
   let pair_ty ty1 ty2 = pair_t (-1) ty1 ty2 in
   let pair_prim2 a b = pair_prim [a; b] in
   let pair_nat_nat_prim = pair_prim2 nat_prim nat_prim in
-  pair_ty nat_ty nat_ty >>??= fun pair_nat_nat_ty ->
+  pair_ty nat_ty nat_ty >>??= fun (Ty_ex_c pair_nat_nat_ty) ->
   test_context () >>=? fun ctxt ->
   (* pair nat nat *)
   test_parse_ty ctxt pair_nat_nat_prim pair_nat_nat_ty >>?= fun ctxt ->
   (* pair (pair nat nat) nat *)
-  pair_ty pair_nat_nat_ty nat_ty >>??= fun pair_pair_nat_nat_nat_ty ->
+  pair_ty pair_nat_nat_ty nat_ty >>??= fun (Ty_ex_c pair_pair_nat_nat_nat_ty) ->
   test_parse_ty
     ctxt
     (pair_prim2 pair_nat_nat_prim nat_prim)
     pair_pair_nat_nat_nat_ty
   >>?= fun ctxt ->
   (* pair nat (pair nat nat) *)
-  pair_ty nat_ty pair_nat_nat_ty >>??= fun pair_nat_pair_nat_nat_ty ->
+  pair_ty nat_ty pair_nat_nat_ty >>??= fun (Ty_ex_c pair_nat_pair_nat_nat_ty) ->
   test_parse_ty
     ctxt
     (pair_prim2 nat_prim pair_nat_nat_prim)
     pair_nat_pair_nat_nat_ty
   >>?= fun ctxt ->
   (* pair nat nat nat *)
-  pair_ty nat_ty pair_nat_nat_ty >>??= fun pair_nat_nat_nat_ty ->
+  pair_ty nat_ty pair_nat_nat_ty >>??= fun (Ty_ex_c pair_nat_nat_nat_ty) ->
   test_parse_ty
     ctxt
     (pair_prim [nat_prim; nat_prim; nat_prim])
     pair_nat_nat_nat_ty
   >>?= fun ctxt ->
   (* pair (nat %a) nat *)
-  pair_t (-1) nat_ty nat_ty >>??= fun pair_nat_a_nat_ty ->
+  pair_t (-1) nat_ty nat_ty >>??= fun (Ty_ex_c pair_nat_a_nat_ty) ->
   test_parse_ty ctxt (pair_prim2 nat_prim_a nat_prim) pair_nat_a_nat_ty
   >>?= fun ctxt ->
   (* pair nat (nat %b) *)
-  pair_t (-1) nat_ty nat_ty >>??= fun pair_nat_nat_b_ty ->
+  pair_t (-1) nat_ty nat_ty >>??= fun (Ty_ex_c pair_nat_nat_b_ty) ->
   test_parse_ty ctxt (pair_prim2 nat_prim nat_prim_b) pair_nat_nat_b_ty
   >>?= fun ctxt ->
   (* pair (nat %a) (nat %b) *)
-  pair_t (-1) nat_ty nat_ty >>??= fun pair_nat_a_nat_b_ty ->
+  pair_t (-1) nat_ty nat_ty >>??= fun (Ty_ex_c pair_nat_a_nat_b_ty) ->
   test_parse_ty ctxt (pair_prim2 nat_prim_a nat_prim_b) pair_nat_a_nat_b_ty
   >>?= fun ctxt ->
   (* pair (nat %a) (nat %b) (nat %c) *)
-  pair_t (-1) nat_ty nat_ty >>??= fun pair_nat_b_nat_c_ty ->
-  pair_t (-1) nat_ty pair_nat_b_nat_c_ty >>??= fun pair_nat_a_nat_b_nat_c_ty ->
+  pair_t (-1) nat_ty nat_ty >>??= fun (Ty_ex_c pair_nat_b_nat_c_ty) ->
+  pair_t (-1) nat_ty pair_nat_b_nat_c_ty
+  >>??= fun (Ty_ex_c pair_nat_a_nat_b_nat_c_ty) ->
   test_parse_ty
     ctxt
     (pair_prim [nat_prim_a; nat_prim_b; nat_prim_c])
     pair_nat_a_nat_b_nat_c_ty
   >>?= fun ctxt ->
   (* pair (nat %a) (pair %b nat nat) *)
-  pair_t (-1) nat_ty nat_ty >>??= fun pair_b_nat_nat_ty ->
-  pair_t (-1) nat_ty pair_b_nat_nat_ty >>??= fun pair_nat_a_pair_b_nat_nat_ty ->
+  pair_t (-1) nat_ty nat_ty >>??= fun (Ty_ex_c pair_b_nat_nat_ty) ->
+  pair_t (-1) nat_ty pair_b_nat_nat_ty
+  >>??= fun (Ty_ex_c pair_nat_a_pair_b_nat_nat_ty) ->
   test_parse_ty
     ctxt
     (pair_prim2 nat_prim_a (Prim (-1, T_pair, [nat_prim; nat_prim], ["%b"])))
@@ -266,13 +268,13 @@ let test_unparse_comb_type () =
   let pair_ty ty1 ty2 = pair_t (-1) ty1 ty2 in
   let pair_prim2 a b = pair_prim [a; b] in
   let pair_nat_nat_prim = pair_prim2 nat_prim nat_prim in
-  pair_ty nat_ty nat_ty >>??= fun pair_nat_nat_ty ->
+  pair_ty nat_ty nat_ty >>??= fun (Ty_ex_c pair_nat_nat_ty) ->
   test_context () >>=? fun ctxt ->
   (* pair nat nat *)
   test_unparse_ty __LOC__ ctxt pair_nat_nat_prim pair_nat_nat_ty
   >>?= fun ctxt ->
   (* pair (pair nat nat) nat *)
-  pair_ty pair_nat_nat_ty nat_ty >>??= fun pair_pair_nat_nat_nat_ty ->
+  pair_ty pair_nat_nat_ty nat_ty >>??= fun (Ty_ex_c pair_pair_nat_nat_nat_ty) ->
   test_unparse_ty
     __LOC__
     ctxt
@@ -280,7 +282,7 @@ let test_unparse_comb_type () =
     pair_pair_nat_nat_nat_ty
   >>?= fun ctxt ->
   (* pair nat nat nat *)
-  pair_ty nat_ty pair_nat_nat_ty >>??= fun pair_nat_nat_nat_ty ->
+  pair_ty nat_ty pair_nat_nat_ty >>??= fun (Ty_ex_c pair_nat_nat_nat_ty) ->
   test_unparse_ty
     __LOC__
     ctxt
@@ -303,9 +305,9 @@ let test_unparse_comb_comparable_type () =
   let open Script in
   let open Script_typed_ir in
   let nat_prim = Prim ((), T_nat, [], []) in
-  let nat_ty = nat_key in
+  let nat_ty = nat_t in
   let pair_prim l = Prim ((), T_pair, l, []) in
-  let pair_ty ty1 ty2 = pair_key (-1) ty1 ty2 in
+  let pair_ty ty1 ty2 = comparable_pair_t (-1) ty1 ty2 in
   let pair_prim2 a b = pair_prim [a; b] in
   let pair_nat_nat_prim = pair_prim2 nat_prim nat_prim in
   pair_ty nat_ty nat_ty >>??= fun pair_nat_nat_ty ->
@@ -373,11 +375,11 @@ let test_parse_comb_data () =
   let nat_ty = nat_t in
   let pair_prim l = Prim (-1, D_Pair, l, []) in
   let pair_ty ty1 ty2 = pair_t (-1) ty1 ty2 in
-  pair_ty nat_ty nat_ty >>??= fun pair_nat_nat_ty ->
+  pair_ty nat_ty nat_ty >>??= fun (Ty_ex_c pair_nat_nat_ty) ->
   let pair_prim2 a b = pair_prim [a; b] in
   let pair_z_z_prim = pair_prim2 z_prim z_prim in
   list_t (-1) nat_ty >>??= fun list_nat_ty ->
-  big_map_t (-1) nat_key nat_ty >>??= fun big_map_nat_nat_ty ->
+  big_map_t (-1) nat_ty nat_ty >>??= fun big_map_nat_nat_ty ->
   test_context_with_nat_nat_big_map () >>=? fun (ctxt, big_map_id) ->
   (* Pair 0 0 *)
   test_parse_data __LOC__ ctxt pair_nat_nat_ty pair_z_z_prim (z, z)
@@ -391,7 +393,7 @@ let test_parse_comb_data () =
     (z, z)
   >>=? fun ctxt ->
   (* Pair (Pair 0 0) 0 *)
-  pair_ty pair_nat_nat_ty nat_ty >>??= fun pair_pair_nat_nat_nat_ty ->
+  pair_ty pair_nat_nat_ty nat_ty >>??= fun (Ty_ex_c pair_pair_nat_nat_nat_ty) ->
   test_parse_data
     __LOC__
     ctxt
@@ -400,7 +402,7 @@ let test_parse_comb_data () =
     ((z, z), z)
   >>=? fun ctxt ->
   (* Pair 0 (Pair 0 0) *)
-  pair_ty nat_ty pair_nat_nat_ty >>??= fun pair_nat_pair_nat_nat_ty ->
+  pair_ty nat_ty pair_nat_nat_ty >>??= fun (Ty_ex_c pair_nat_pair_nat_nat_ty) ->
   test_parse_data
     __LOC__
     ctxt
@@ -425,7 +427,7 @@ let test_parse_comb_data () =
     (z, (z, z))
   >>=? fun ctxt ->
   (* Should fail: {0} against pair nat (list nat) *)
-  pair_ty nat_ty list_nat_ty >>??= fun pair_nat_list_nat_ty ->
+  pair_ty nat_ty list_nat_ty >>??= fun (Ty_ex_c pair_nat_list_nat_ty) ->
   test_parse_data_fails
     __LOC__
     ctxt
@@ -448,19 +450,35 @@ let test_parse_comb_data () =
   let expected_big_map =
     let open Script_typed_ir in
     let diff = {map = Big_map_overlay.empty; size = 0} in
-    let nat_key_ty = nat_key in
-    {id = Some big_map_id; diff; key_type = nat_key_ty; value_type = nat_ty}
+    Big_map {id = Some big_map_id; diff; key_type = nat_ty; value_type = nat_ty}
   in
-  let equal (nat1, big_map1) (nat2, big_map2) =
+  let ty_equal :
+      type a ac1 ac2.
+      (a, ac1) Script_typed_ir.ty -> (a, ac2) Script_typed_ir.ty -> bool =
+   fun ty1 ty2 ->
+    match Script_typed_ir.(is_comparable ty1, is_comparable ty2) with
+    | (Yes, Yes) -> ty1 = ty2
+    | (No, No) -> ty1 = ty2
+    | (Yes, No) -> assert false
+    | (No, Yes) -> assert false
+   (*
+      These last two cases can't happen because the comparable character of a
+      type is a function of its concrete type.
+      It is possible to write a function that proves it but it is not needed
+      in the protocol for the moment.
+   *)
+  in
+  let equal (nat1, Big_map big_map1) (nat2, Big_map big_map2) =
     (* Custom equal needed because big maps contain boxed maps containing functional values *)
     nat1 = nat2 && big_map1.id = big_map2.id
     && big_map1.key_type = big_map2.key_type
-    && big_map1.value_type = big_map2.value_type
+    && ty_equal big_map1.value_type big_map2.value_type
     && big_map1.diff.size = big_map2.diff.size
     && Big_map_overlay.bindings big_map1.diff.map
        = Big_map_overlay.bindings big_map2.diff.map
   in
-  pair_ty nat_ty big_map_nat_nat_ty >>??= fun pair_nat_big_map_nat_nat_ty ->
+  pair_ty nat_ty big_map_nat_nat_ty
+  >>??= fun (Ty_ex_c pair_nat_big_map_nat_nat_ty) ->
   test_parse_data
     ~equal
     __LOC__
@@ -522,7 +540,7 @@ let test_unparse_comb_data () =
   let nat_ty = nat_t in
   let pair_prim l = Prim (-1, D_Pair, l, []) in
   let pair_ty ty1 ty2 = pair_t (-1) ty1 ty2 in
-  pair_ty nat_ty nat_ty >>??= fun pair_nat_nat_ty ->
+  pair_ty nat_ty nat_ty >>??= fun (Ty_ex_c pair_nat_nat_ty) ->
   let pair_prim2 a b = pair_prim [a; b] in
   let pair_z_z_prim = pair_prim2 z_prim z_prim in
   test_context () >>=? fun ctxt ->
@@ -536,7 +554,7 @@ let test_unparse_comb_data () =
     ~expected_optimized:pair_z_z_prim
   >>=? fun ctxt ->
   (* Pair (Pair 0 0) 0 *)
-  pair_ty pair_nat_nat_ty nat_ty >>??= fun pair_pair_nat_nat_nat_ty ->
+  pair_ty pair_nat_nat_ty nat_ty >>??= fun (Ty_ex_c pair_pair_nat_nat_nat_ty) ->
   test_unparse_data
     __LOC__
     ctxt
@@ -546,7 +564,7 @@ let test_unparse_comb_data () =
     ~expected_optimized:(pair_prim2 pair_z_z_prim z_prim)
   >>=? fun ctxt ->
   (* Readable: Pair 0 0 0; Optimized: Pair 0 (Pair 0 0) *)
-  pair_ty nat_ty pair_nat_nat_ty >>??= fun pair_nat_pair_nat_nat_ty ->
+  pair_ty nat_ty pair_nat_nat_ty >>??= fun (Ty_ex_c pair_nat_pair_nat_nat_ty) ->
   test_unparse_data
     __LOC__
     ctxt
@@ -557,7 +575,7 @@ let test_unparse_comb_data () =
   >>=? fun ctxt ->
   (* Readable: Pair 0 0 0 0; Optimized: {0; 0; 0; 0} *)
   pair_ty nat_ty pair_nat_pair_nat_nat_ty
-  >>??= fun pair_nat_pair_nat_pair_nat_nat_ty ->
+  >>??= fun (Ty_ex_c pair_nat_pair_nat_pair_nat_nat_ty) ->
   test_unparse_data
     __LOC__
     ctxt
@@ -630,16 +648,16 @@ let test_optimal_comb () =
   in
   let pair_ty ty1 ty2 = pair_t (-1) ty1 ty2 in
   test_context () >>=? fun ctxt ->
-  pair_ty leaf_ty leaf_ty >>??= fun comb2_ty ->
+  pair_ty leaf_ty leaf_ty >>??= fun (Ty_ex_c comb2_ty) ->
   let comb2_v = (leaf_v, leaf_v) in
   check_optimal_comb __LOC__ ctxt comb2_ty comb2_v 2 >>=? fun ctxt ->
-  pair_ty leaf_ty comb2_ty >>??= fun comb3_ty ->
+  pair_ty leaf_ty comb2_ty >>??= fun (Ty_ex_c comb3_ty) ->
   let comb3_v = (leaf_v, comb2_v) in
   check_optimal_comb __LOC__ ctxt comb3_ty comb3_v 3 >>=? fun ctxt ->
-  pair_ty leaf_ty comb3_ty >>??= fun comb4_ty ->
+  pair_ty leaf_ty comb3_ty >>??= fun (Ty_ex_c comb4_ty) ->
   let comb4_v = (leaf_v, comb3_v) in
   check_optimal_comb __LOC__ ctxt comb4_ty comb4_v 4 >>=? fun ctxt ->
-  pair_ty leaf_ty comb4_ty >>??= fun comb5_ty ->
+  pair_ty leaf_ty comb4_ty >>??= fun (Ty_ex_c comb5_ty) ->
   let comb5_v = (leaf_v, comb4_v) in
   check_optimal_comb __LOC__ ctxt comb5_ty comb5_v 5 >>=? fun _ctxt ->
   return_unit

@@ -34,6 +34,7 @@ end
 module String = struct
   include String
   include Tezos_stdlib.TzString
+  module Set = Tezos_error_monad.TzLwtreslib.Set.Make (String)
 end
 
 let valid_char c =
@@ -165,13 +166,13 @@ end = struct
   let pp fmt section = Format.fprintf fmt "%s" (String.concat "." section.path)
 end
 
-let registered_sections = ref TzString.Set.empty
+let registered_sections = ref String.Set.empty
 
-let get_registered_sections () = !registered_sections
+let get_registered_sections () = String.Set.to_seq !registered_sections
 
 let register_section section =
   registered_sections :=
-    TzString.Set.add
+    String.Set.add
       (Lwt_log_core.Section.name (Section.to_lwt_log section))
       !registered_sections
 
@@ -299,14 +300,14 @@ module All_sinks = struct
       (fun reason -> Activation_error reason)
 
   let activate uri =
-    let open Lwt_tzresult_syntax in
+    let open Lwt_result_syntax in
     match Uri.scheme uri with
-    | None -> fail (Activation_error (Missing_uri_scheme (Uri.to_string uri)))
+    | None -> tzfail (Activation_error (Missing_uri_scheme (Uri.to_string uri)))
     | Some scheme_to_activate ->
         let* act =
           match find_registered scheme_to_activate with
           | None ->
-              fail
+              tzfail
                 (Activation_error
                    (Uri_scheme_not_registered (Uri.to_string uri)))
           | Some (Registered {scheme; definition}) ->
@@ -343,7 +344,7 @@ module All_sinks = struct
         (fun (Active {sink; definition; _}) -> close_one sink definition)
         to_close_list
     in
-    Tzresult_syntax.join close_results
+    Result_syntax.tzjoin close_results
 
   let handle def section v =
     let handle (type a) sink definition =
@@ -700,15 +701,18 @@ module Simple = struct
       if i >= len then invalid_msg "unmatched '{'" msg
       else if msg.[i] = '}' then
         let variable_name = String.sub msg atom_start (i - atom_start) in
-        match TzList.index_of variable_name variable_names with
-        | None ->
-            invalid_msg
-              (Printf.sprintf "unbound variable: %S" variable_name)
-              msg
-        | Some index ->
-            let acc = Variable index :: acc in
-            let i = i + 1 in
-            find_variable_begin acc i i
+        let rec loop index = function
+          | [] ->
+              invalid_msg
+                (Printf.sprintf "unbound variable: %S" variable_name)
+                msg
+          | varname :: _ when String.equal varname variable_name ->
+              let acc = Variable index :: acc in
+              let i = i + 1 in
+              find_variable_begin acc i i
+          | _ :: variable_names -> loop (index + 1) variable_names
+        in
+        loop 0 variable_names
       else find_variable_end acc atom_start (i + 1)
     in
     find_variable_begin [] 0 0 |> List.rev
@@ -1256,7 +1260,7 @@ module Legacy_logging = struct
       let section = Some section
     end
 
-    let () = registered_sections := TzString.Set.add P.name !registered_sections
+    let () = registered_sections := String.Set.add P.name !registered_sections
 
     module Event = Make (Definition)
 
@@ -1550,7 +1554,7 @@ module Lwt_log_sink = struct
 
     let uri_scheme = "lwt-log"
 
-    let configure _ = return_unit
+    let configure _ = Lwt_result_syntax.return_unit
 
     let handle (type a) () m ?section (v : unit -> a) =
       let open Lwt_syntax in

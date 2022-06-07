@@ -1,9 +1,10 @@
 ; This file was automatically generated, do not edit.
 ; Edit file manifest/main.ml instead.
 
-(tests
+(env (_ (env-vars (NODE_PRELOAD hacl-wasm,ocaml-bls12-381,secp256k1-wasm))))
+
+(executables
  (names test_rustzcash test_keys test_merkle test_roots test_sapling)
- (package tezos-sapling)
  (libraries
   tezos-sapling
   tezos-crypto
@@ -22,10 +23,37 @@
    -open Tezos_stdlib
    -open Data_encoding
    -open Tezos_base_test_helpers))
- (modules (:standard \ test_js))
- (deps (file vectors.csv) (file vectors-zip32.csv)))
+ (modules (:standard \ test_js)))
 
-(env (dev (flags (:standard -warn-error -A))))
+(rule
+ (alias runtest)
+ (package tezos-sapling)
+ (deps vectors.csv vectors-zip32.csv)
+ (action (run %{dep:./test_rustzcash.exe})))
+
+(rule
+ (alias runtest)
+ (package tezos-sapling)
+ (deps vectors.csv vectors-zip32.csv)
+ (action (run %{dep:./test_keys.exe})))
+
+(rule
+ (alias runtest)
+ (package tezos-sapling)
+ (deps vectors.csv vectors-zip32.csv)
+ (action (run %{dep:./test_merkle.exe})))
+
+(rule
+ (alias runtest)
+ (package tezos-sapling)
+ (deps vectors.csv vectors-zip32.csv)
+ (action (run %{dep:./test_roots.exe})))
+
+(rule
+ (alias runtest)
+ (package tezos-sapling)
+ (deps vectors.csv vectors-zip32.csv)
+ (action (run %{dep:./test_sapling.exe})))
 
 (executable
  (name test_js)
@@ -40,8 +68,4 @@
 (rule
  (alias runtest_js)
  (package tezos-sapling)
- (locks npm)
- (action
-  (run
-   %{dep:../../tooling/node_wrapper.exe} --secp256k1 1.1.1 --hacl 1.1.0
-   %{dep:./test_js.bc.js})))
+ (action (run node %{dep:./test_js.bc.js})))

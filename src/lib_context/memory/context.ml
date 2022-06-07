@@ -26,13 +26,55 @@
 
 module Make (Encoding : module type of Tezos_context_encoding.Context) = struct
   open Encoding
-  module Store =
-    Irmin_pack_mem.Make (Node) (Commit) (Conf) (Metadata) (Contents) (Path)
-      (Branch)
-      (Hash)
-  module Tree = Tezos_context_helpers.Context.Make_tree (Store)
+
+  module Store = struct
+    module Maker = Irmin_pack_mem.Maker (Conf)
+    include Maker.Make (Schema)
+    module Schema = Tezos_context_encoding.Context.Schema
+  end
+
+  type kinded_key = [`Value of Context_hash.t | `Node of Context_hash.t]
+
+  module Kinded_key = struct
+    let to_irmin_key (t : kinded_key) =
+      match t with
+      | `Node hash -> `Node (Hash.of_context_hash hash)
+      | `Value hash -> `Contents (Hash.of_context_hash hash, ())
+
+    let of_irmin_key t : kinded_key =
+      match t with
+      | `Node hash -> `Node (Hash.to_context_hash hash)
+      | `Contents (hash, ()) -> `Value (Hash.to_context_hash hash)
+  end
+
+  module Tree = struct
+    include Tezos_context_helpers.Context.Make_tree (Conf) (Store)
+
+    let shallow repo key = Store.Tree.shallow repo (Kinded_key.to_irmin_key key)
+
+    let kinded_key tree =
+      match Store.Tree.key tree with
+      | None -> None
+      | Some h -> Some (Kinded_key.of_irmin_key h)
+  end
+
   include Tree
-  include Tezos_context_helpers.Context.Make_proof (Store)
+  include Tezos_context_helpers.Context.Make_proof (Store) (Conf)
+  include Tezos_context_helpers.Context.Make_config (Conf)
+
+  let produce_tree_proof t key =
+    produce_tree_proof
+      t
+      (match key with
+      | `Node hash -> `Node (Hash.of_context_hash hash)
+      | `Value hash -> `Value (Hash.of_context_hash hash))
+
+  let produce_stream_proof t key =
+    produce_stream_proof
+      t
+      (match key with
+      | `Node hash -> `Node (Hash.of_context_hash hash)
+      | `Value hash -> `Value (Hash.of_context_hash hash))
 
   type index = Store.repo
 
@@ -78,7 +120,7 @@ module Make (Encoding : module type of Tezos_context_encoding.Context) = struct
   let unshallow context =
     let open Lwt_syntax in
     let* children = Store.Tree.list context.tree [] in
-    Store.Private.Repo.batch context.repo (fun x y _ ->
+    Store.Backend.Repo.batch context.repo (fun x y _ ->
         List.iter_s
           (fun (s, k) ->
             match Store.Tree.destruct k with
@@ -92,22 +134,24 @@ module Make (Encoding : module type of Tezos_context_encoding.Context) = struct
   let raw_commit ~time ?(message = "") context =
     let open Lwt_syntax in
     let info =
-      Irmin.Info.v ~date:(Time.Protocol.to_seconds time) ~author:"Tezos" message
+      Store.Info.v (Time.Protocol.to_seconds time) ~author:"Tezos" ~message
     in
-    let parents = List.map Store.Commit.hash context.parents in
+    let parents = List.map Store.Commit.key context.parents in
     let* () = unshallow context in
     let+ h = Store.Commit.v context.repo ~info ~parents context.tree in
     Store.Tree.clear context.tree ;
     h
 
+  module Commit_hash = Irmin.Hash.Typed (Hash) (Store.Backend.Commit_portable)
+
   let hash ~time ?(message = "") context =
     let info =
-      Irmin.Info.v ~date:(Time.Protocol.to_seconds time) ~author:"Tezos" message
+      Store.Info.v (Time.Protocol.to_seconds time) ~author:"Tezos" ~message
     in
-    let parents = List.map (fun c -> Store.Commit.hash c) context.parents in
+    let parents = List.map (fun c -> Store.Commit.key c) context.parents in
     let node = Store.Tree.hash context.tree in
-    let commit = Store.Private.Commit.Val.v ~parents ~node ~info in
-    let x = Store.Private.Commit.Key.hash commit in
+    let commit = Store.Backend.Commit_portable.v ~parents ~node ~info in
+    let x = Commit_hash.hash commit in
     Hash.to_context_hash x
 
   let commit ~time ?message context =
@@ -126,7 +170,7 @@ module Make (Encoding : module type of Tezos_context_encoding.Context) = struct
   let list ctxt ?offset ?length key =
     Tree.list ctxt.tree ?offset ?length (data_key key)
 
-  let length ctxt key = Tree.length ctxt.tree key
+  let length ctxt key = Tree.length ctxt.tree (data_key key)
 
   let find ctxt key = Tree.find ctxt.tree (data_key key)
 
@@ -176,8 +220,10 @@ module Make (Encoding : module type of Tezos_context_encoding.Context) = struct
   let get_hash_version _c = Context_hash.Version.of_int 0
 
   let set_hash_version c v =
+    let open Lwt_result_syntax in
     if Context_hash.Version.(of_int 0 = v) then return c
-    else fail (Tezos_context_helpers.Context.Unsupported_context_hash_version v)
+    else
+      tzfail (Tezos_context_helpers.Context.Unsupported_context_hash_version v)
 
   let add_predecessor_block_metadata_hash v hash =
     let data =

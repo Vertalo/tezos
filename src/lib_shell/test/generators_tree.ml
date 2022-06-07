@@ -56,14 +56,6 @@ module List_extra = struct
         match take_until_if_found ~pred rest_l with
         | None -> None
         | Some tail -> Some (fst :: tail))
-
-  (** [split_n l n] returns two lists, the first one containing the first
-      [n] elements of [l] and the second one containing the remaining elements.
-      For example:
-      [split_n [] _] is [([], [])]
-      [split_n ["a"] 1] is [(["a"], [])]
-      [split_n ["a"; "b"; "c"] 1] is [(["a"], ["b"; "c"])] *)
-  let split_n l n = (List.take_n n l, List.drop_n n l)
 end
 
 module Tree = struct
@@ -293,16 +285,16 @@ module External_generators = Generators
     to generate protocol bytes of operations. *)
 let block_gen ?proto_gen () : Block.t QCheck2.Gen.t =
   let open QCheck2.Gen in
+  let ops_list_gen =
+    (* Having super long list of operations isn't necessary.
+       In addition it slows everything down. *)
+    list_size
+      (int_range 0 10)
+      (External_generators.operation_with_hash_gen ?proto_gen ())
+  in
   let* ops =
-    let ops_list_gen =
-      (* Having super long list of operations isn't necessary.
-         In addition it slows everything down. *)
-      list_size
-        (int_range 0 10)
-        (External_generators.operation_with_hash_gen ?proto_gen ())
-    in
     (* In production these lists are exactly of size 4, being more general *)
-    ops_list_gen |> list_size (int_range 0 8)
+    list_size (int_range 0 8) ops_list_gen
   in
   let hash = Block.hash_of_block ops in
   return Block.{hash; operations = ops}
@@ -313,7 +305,7 @@ let block_gen ?proto_gen () : Block.t QCheck2.Gen.t =
    optional generator for protocol bytes of operations. *)
 let unique_block_gen ?(list_gen = QCheck2.Gen.small_list) ?proto_gen () :
     Block.Set.t QCheck2.Gen.t =
-  QCheck2.Gen.(list_gen (block_gen ?proto_gen ()) >|= Block.Set.of_list)
+  QCheck2.Gen.(map Block.Set.of_list @@ list_gen (block_gen ?proto_gen ()))
 
 (* A generator of sets of {!Block.t} where all elements are guaranteed
    to be different and returned sets are guaranteed to be non empty. *)
@@ -330,7 +322,7 @@ let unique_nonempty_block_gen =
 let unique_block_gen_gt ?proto_gen ~(n : int) () : Block.Set.t QCheck2.Gen.t =
   assert (n >= 0) ;
   let open QCheck2.Gen in
-  let list_gen = list_size (return n) in
+  let list_gen = list_repeat n in
   let rec go generated =
     if Block.Set.cardinal generated >= n then return generated
     else
@@ -360,7 +352,7 @@ let tree_gen ?blocks () =
     | None ->
         (* no blocks received: generate them, use the [nonempty] flavor
            of the generator, to guarantee [blocks <> []] below. *)
-        unique_nonempty_block_gen >|= Block.set_to_list
+        map Block.set_to_list unique_nonempty_block_gen
     | Some [] ->
         QCheck2.Test.fail_report
           "tree_gen should not be called with an empty list of blocks"
@@ -381,9 +373,8 @@ let tree_gen ?blocks () =
           | None -> ret (Tree.Leaf x)
           | Some sub -> ret (Tree.Node1 (x, sub))
         else
-          let* (left, right) =
-            QCheck2.Gen.int_bound (List.length xs - 1) >|= List_extra.split_n xs
-          in
+          let* n = QCheck2.Gen.int_bound (List.length xs - 1) in
+          let (left, right) = List.split_n n xs in
           let* left = go left and* right = go right in
           match (left, right) with
           | (None, None) -> ret (Tree.Leaf x)
@@ -392,7 +383,7 @@ let tree_gen ?blocks () =
   in
   (* The assertion cannot break, because we made sure that [blocks] is
      not empty. *)
-  go blocks >|= Option.value_f ~default:(fun () -> assert false)
+  map (WithExceptions.Option.get ~loc:__LOC__) (go blocks)
 
 (** A generator for passing the last argument of
       [Prevalidator.handle_live_operations] *)
@@ -532,4 +523,4 @@ let split_in_two (l : 'a list) : ('a list * 'a list) QCheck2.Gen.t =
   let open QCheck2.Gen in
   let length = List.length l in
   let+ i = 0 -- length in
-  List_extra.split_n l i
+  List.split_n i l

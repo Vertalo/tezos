@@ -28,14 +28,14 @@ workflow:
 # The "manual" stage exists to fix a UI problem that occurs when mixing
 # manual and non-manual jobs.
 stages:
-  - packaging
   - sanity
   - build
   - test
+  - test_coverage
+  - packaging
   - doc
   - build_release
   - publish_release
-  - test_coverage
   - manual
 
 # All the jobs belonging to a stage X should be in
@@ -63,7 +63,6 @@ include:
   - .gitlab/ci/test/unit.yml
   - .gitlab/ci/test/integration.yml
   - .gitlab/ci/test/liquidity-baking-scripts-integrity.yml
-  - .gitlab/ci/test/coq.yml
   - .gitlab/ci/test/tezt.yml
   - .gitlab/ci/doc.yml
   - .gitlab/ci/doc/test-scripts.yml

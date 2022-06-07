@@ -33,3 +33,59 @@ let sc_rollup_address () =
     ~query:RPC_query.empty
     ~output:Sc_rollup.Address.encoding
     RPC_path.(open_root / "sc_rollup_address")
+
+let current_tezos_head () =
+  RPC_service.get_service
+    ~description:"Tezos head known to the smart-contract rollup node"
+    ~query:RPC_query.empty
+    ~output:(Data_encoding.option Block_hash.encoding)
+    RPC_path.(open_root / "tezos_head")
+
+let current_tezos_level () =
+  RPC_service.get_service
+    ~description:"Tezos level known to the smart-contract rollup node"
+    ~query:RPC_query.empty
+    ~output:(Data_encoding.option Data_encoding.int32)
+    RPC_path.(open_root / "tezos_level")
+
+let current_inbox () =
+  RPC_service.get_service
+    ~description:"Current inbox"
+    ~query:RPC_query.empty
+    ~output:Sc_rollup.Inbox.encoding
+    RPC_path.(open_root / "inbox")
+
+let current_ticks () =
+  RPC_service.get_service
+    ~description:"Current number of ticks for current level"
+    ~query:RPC_query.empty
+    ~output:Data_encoding.z
+    RPC_path.(open_root / "ticks")
+
+let current_total_ticks () =
+  RPC_service.get_service
+    ~description:"Current total number of ticks"
+    ~query:RPC_query.empty
+    ~output:Sc_rollup.Tick.encoding
+    RPC_path.(open_root / "total_ticks")
+
+let current_num_messages () =
+  RPC_service.get_service
+    ~description:"Current number of messages"
+    ~query:RPC_query.empty
+    ~output:Data_encoding.z
+    RPC_path.(open_root / "current_num_messages")
+
+let current_state_hash () =
+  RPC_service.get_service
+    ~description:"Current state hash"
+    ~query:RPC_query.empty
+    ~output:Sc_rollup.State_hash.encoding
+    RPC_path.(open_root / "state_hash")
+
+let current_status () =
+  RPC_service.get_service
+    ~description:"Current PVM status"
+    ~query:RPC_query.empty
+    ~output:Data_encoding.string
+    RPC_path.(open_root / "status")

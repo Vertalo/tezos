@@ -61,7 +61,7 @@ let wait_pred ?timeout ~pred ~arg () =
       Lwt.pick
         [
           (let*! () = Lwt_unix.sleep timeout.time in
-           Error_monad.fail (Timeout_exceed (timeout.msg arg)));
+           tzfail (Timeout_exceed (timeout.msg arg)));
           inner_wait_pred ();
         ]
 
@@ -78,7 +78,7 @@ let wait_pred_s ?timeout ~pred ~arg () =
       Lwt.pick
         [
           (let*! () = Lwt_unix.sleep timeout.time in
-           Error_monad.fail (Timeout_exceed (timeout.msg arg)));
+           tzfail (Timeout_exceed (timeout.msg arg)));
           inner_wait_pred ();
         ]
 

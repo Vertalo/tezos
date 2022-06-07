@@ -50,10 +50,19 @@ module Make (Encoding : module type of Tezos_context_encoding.Context) : sig
 
   val index : context -> index
 
-  (** Open or initialize a versioned store at a given path. *)
+  (** Open or initialize a versioned store at a given path.
+
+      @param indexing_strategy determines whether newly-exported objects by
+      this store handle should also be added to the store's index. [`Minimal]
+      (the default) only adds objects to the index when they are {i commits},
+      whereas [`Always] indexes every object type. The indexing strategy used
+      for existing stores can be changed without issue (as only {i
+      newly}-exported objects are impacted). *)
   val init :
     ?patch_context:(context -> context tzresult Lwt.t) ->
     ?readonly:bool ->
+    ?indexing_strategy:[`Always | `Minimal] ->
+    ?index_log_size:int ->
     string ->
     index Lwt.t
 
@@ -64,9 +73,18 @@ module Make (Encoding : module type of Tezos_context_encoding.Context) : sig
     Does not fail when the context is not in read-only mode. *)
   val sync : index -> unit Lwt.t
 
+  val flush : t -> t Lwt.t
+
   val compute_testchain_chain_id : Block_hash.t -> Chain_id.t
 
   val compute_testchain_genesis : Block_hash.t -> Block_hash.t
+
+  (** Build an empty context from an index. The resulting context should not
+      be committed. *)
+  val empty : index -> t
+
+  (** Returns [true] if the context is empty. *)
+  val is_empty : t -> bool
 
   val commit_genesis :
     index ->
@@ -77,6 +95,11 @@ module Make (Encoding : module type of Tezos_context_encoding.Context) : sig
 
   val commit_test_chain_genesis :
     context -> Block_header.t -> Block_header.t Lwt.t
+
+  (** Extract a subtree from the {!Tezos_context.Context.t} argument and returns
+      it as a {!Tezos_context_memory.Context.tree} (note the the type change!). **)
+  val to_memory_tree :
+    t -> string list -> Tezos_context_memory.Context.tree option Lwt.t
 
   (** [merkle_tree t leaf_kind key] returns a Merkle proof for [key] (i.e.
     whose hashes reach [key]). If [leaf_kind] is [Block_services.Hole], the value
@@ -153,13 +176,22 @@ module Make (Encoding : module type of Tezos_context_encoding.Context) : sig
   (** {2 Context dumping} *)
 
   val dump_context :
-    index -> Context_hash.t -> fd:Lwt_unix.file_descr -> int tzresult Lwt.t
+    index ->
+    Context_hash.t ->
+    fd:Lwt_unix.file_descr ->
+    on_disk:bool ->
+    progress_display_mode:Animation.progress_display_mode ->
+    int tzresult Lwt.t
 
+  (** Rebuild a context from a given snapshot. *)
   val restore_context :
     index ->
     expected_context_hash:Context_hash.t ->
     nb_context_elements:int ->
     fd:Lwt_unix.file_descr ->
+    legacy:bool ->
+    in_memory:bool ->
+    progress_display_mode:Animation.progress_display_mode ->
     unit tzresult Lwt.t
 
   val retrieve_commit_info :
@@ -178,7 +210,6 @@ module Make (Encoding : module type of Tezos_context_encoding.Context) : sig
     Lwt.t
 
   val check_protocol_commit_consistency :
-    index ->
     expected_context_hash:Context_hash.t ->
     given_protocol_hash:Protocol_hash.t ->
     author:string ->
@@ -193,7 +224,7 @@ module Make (Encoding : module type of Tezos_context_encoding.Context) : sig
 
   (** Offline integrity checking and statistics for contexts. *)
   module Checks : sig
-    module Pack : Irmin_pack.Checks.S
+    module Pack : Irmin_pack_unix.Checks.S
 
     module Index : Index.Checks.S
   end

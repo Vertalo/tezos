@@ -63,6 +63,8 @@ type t = {
   latency : int option;
   allow_all_rpc : P2p_point.Id.addr_port_id list;
   media_type : Media_type.Command_line.t;
+  metrics_addr : string list;
+  operation_metadata_size_limit : int option option;
 }
 
 type error +=
@@ -106,22 +108,25 @@ let () =
     (fun (status, body) -> Network_http_error (status, body))
 
 let decode_net_config source json =
-  try
+  let open Result_syntax in
+  match
     Data_encoding.Json.destruct
       Node_config_file.blockchain_network_encoding
       json
-    |> return
   with
-  | Json_encoding.Cannot_destruct (path, exn) ->
+  | net_cfg -> return net_cfg
+  | exception Json_encoding.Cannot_destruct (path, exn) ->
       let path = Json_query.json_pointer_of_path path in
-      fail (Invalid_network_config (path, Printexc.to_string exn))
-  | ( Json_encoding.Unexpected _ | Json_encoding.No_case_matched _
-    | Json_encoding.Bad_array_size _ | Json_encoding.Missing_field _
-    | Json_encoding.Unexpected_field _ | Json_encoding.Bad_schema _ ) as exn ->
-      fail (Invalid_network_config (source, Printexc.to_string exn))
+      tzfail (Invalid_network_config (path, Printexc.to_string exn))
+  | exception
+      (( Json_encoding.Unexpected _ | Json_encoding.No_case_matched _
+       | Json_encoding.Bad_array_size _ | Json_encoding.Missing_field _
+       | Json_encoding.Unexpected_field _ | Json_encoding.Bad_schema _ ) as exn)
+    ->
+      tzfail (Invalid_network_config (source, Printexc.to_string exn))
 
 let load_net_config =
-  let open Lwt_tzresult_syntax in
+  let open Lwt_result_syntax in
   function
   | BuiltIn net -> return net
   | Url uri ->
@@ -132,14 +137,16 @@ let load_net_config =
         | `OK -> (
             try return (Ezjsonm.from_string body_str)
             with Ezjsonm.Parse_error (_, msg) ->
-              fail (Invalid_network_config (Uri.to_string uri, msg)))
+              tzfail (Invalid_network_config (Uri.to_string uri, msg)))
         | #Cohttp.Code.status_code ->
-            fail (Network_http_error (resp.status, body_str))
+            tzfail (Network_http_error (resp.status, body_str))
       in
-      decode_net_config (Uri.to_string uri) netconfig
+      let*? net_config = decode_net_config (Uri.to_string uri) netconfig in
+      return net_config
   | Filename filename ->
       let* netconfig = Lwt_utils_unix.Json.read_file filename in
-      decode_net_config filename netconfig
+      let*? net_config = decode_net_config filename netconfig in
+      return net_config
 
 let wrap data_dir config_file network connections max_download_speed
     max_upload_speed binary_chunks_size peer_table_size listen_addr
@@ -147,7 +154,8 @@ let wrap data_dir config_file network connections max_download_speed
     bootstrap_threshold private_mode disable_mempool disable_mempool_precheck
     enable_testchain expected_pow rpc_listen_addrs rpc_tls cors_origins
     cors_headers log_output history_mode synchronisation_threshold latency
-    disable_config_validation allow_all_rpc media_type =
+    disable_config_validation allow_all_rpc media_type metrics_addr
+    operation_metadata_size_limit =
   let actual_data_dir =
     Option.value ~default:Node_config_file.default_data_dir data_dir
   in
@@ -190,7 +198,14 @@ let wrap data_dir config_file network connections max_download_speed
     latency;
     allow_all_rpc;
     media_type;
+    metrics_addr;
+    operation_metadata_size_limit;
   }
+
+let process_command run =
+  match Lwt_main.run @@ Lwt_exit.wrap_and_exit run with
+  | Ok () -> `Ok ()
+  | Error err -> `Error (false, Format.asprintf "%a" pp_print_trace err)
 
 module Manpage = struct
   let misc_section = "MISC OPTIONS"
@@ -336,7 +351,7 @@ module Term = struct
       "The directory where the Tezos node will store all its data. Parent \
        directories are created if necessary."
     in
-    let env = Arg.env_var Node_config_file.data_dir_env_name in
+    let env = Cmd.Env.info ~doc Node_config_file.data_dir_env_name in
     Arg.(
       value
       & opt (some string) None
@@ -369,6 +384,48 @@ module Term = struct
       value
       & opt (some (conv network_parser)) None
       & info ~docs ~doc ~docv:"NETWORK" ["network"])
+
+  let metrics_addr =
+    let doc = "Port on which to provide metrics over HTTP." in
+    Arg.(
+      value & opt_all string []
+      & info
+          ~docs
+          ~doc
+          ~docv:
+            "ADDR:PORT or :PORT (by default ADDR is localhost and PORT is 9932)"
+          ["metrics-addr"])
+
+  let operation_metadata_size_limit =
+    let converter =
+      let parse s =
+        if String.(equal (lowercase_ascii s) "unlimited") then `Ok None
+        else
+          match int_of_string_opt s with
+          | None -> `Error s
+          | Some i -> `Ok (Some i)
+      in
+      let pp fmt = function
+        | None -> Format.fprintf fmt "unlimited"
+        | Some i -> Format.pp_print_int fmt i
+      in
+      ((fun arg -> parse arg), pp)
+    in
+    let doc =
+      let default =
+        match Block_validation.default_operation_metadata_size_limit with
+        | None -> "$(i,unlimited)"
+        | Some i -> Format.sprintf "$(i,%d) bytes" i
+      in
+      Format.sprintf
+        "Size limit (in bytes) for operation's metadata to be stored on disk. \
+         Default limit is %s. Use $(i,unlimited) to disregard this limit."
+        default
+    in
+    Arg.(
+      value
+      & opt (some converter) None
+      & info ~docs ~doc ~docv:"<limit-in-bytes>" ["metadata-size-limit"])
 
   (* P2p args *)
 
@@ -611,16 +668,18 @@ module Term = struct
     $ disable_mempool $ disable_mempool_precheck $ enable_testchain
     $ expected_pow $ rpc_listen_addrs $ rpc_tls $ cors_origins $ cors_headers
     $ log_output $ history_mode $ synchronisation_threshold $ latency
-    $ disable_config_validation $ allow_all_rpc $ media_type
+    $ disable_config_validation $ allow_all_rpc $ media_type $ metrics_addr
+    $ operation_metadata_size_limit
 end
 
 let read_config_file args =
+  let open Lwt_result_syntax in
   if Sys.file_exists args.config_file then
     Node_config_file.read args.config_file
   else return Node_config_file.default_config
 
 let read_data_dir args =
-  let open Lwt_tzresult_syntax in
+  let open Lwt_result_syntax in
   let* cfg = read_config_file args in
   let {data_dir; _} = args in
   let data_dir = Option.value ~default:cfg.data_dir data_dir in
@@ -696,7 +755,7 @@ end
 
 let read_and_patch_config_file ?(may_override_network = false)
     ?(ignore_bootstrap_peers = false) args =
-  let open Lwt_tzresult_syntax in
+  let open Lwt_result_syntax in
   let* cfg = read_config_file args in
   let {
     data_dir;
@@ -729,13 +788,15 @@ let read_and_patch_config_file ?(may_override_network = false)
     latency;
     allow_all_rpc;
     media_type;
+    metrics_addr;
+    operation_metadata_size_limit;
   } =
     args
   in
   let* synchronisation_threshold =
     match (bootstrap_threshold, synchronisation_threshold) with
     | (Some _, Some _) ->
-        fail
+        tzfail
           (Invalid_command_line_arguments
              "--bootstrap-threshold is deprecated; use \
               --synchronisation-threshold instead. Do not use both at the same \
@@ -766,7 +827,7 @@ let read_and_patch_config_file ?(may_override_network = false)
             net.chain_name
         then return_unit
         else
-          fail
+          tzfail
             (Network_configuration_mismatch
                {
                  configuration_file_chain_name =
@@ -861,6 +922,8 @@ let read_and_patch_config_file ?(may_override_network = false)
     ~rpc_listen_addrs
     ~allow_all_rpc
     ~media_type
+    ~metrics_addr
+    ?operation_metadata_size_limit
     ~private_mode
     ~disable_mempool
     ~disable_mempool_precheck

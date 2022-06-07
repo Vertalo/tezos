@@ -45,6 +45,8 @@ module type REQUESTER = sig
 
   val read_opt : t -> key -> value option Lwt.t
 
+  val inject : t -> key -> value -> bool Lwt.t
+
   val fetch :
     t ->
     ?peer:P2p_peer.Id.t ->
@@ -68,8 +70,6 @@ module type FULL_REQUESTER = sig
   val pending : t -> key -> bool
 
   val watch : t -> (key * value) Lwt_stream.t * Lwt_watcher.stopper
-
-  val inject : t -> key -> value -> bool Lwt.t
 
   val notify : t -> P2p_peer.Id.t -> key -> notified_value -> unit Lwt.t
 
@@ -106,7 +106,7 @@ module type MEMORY_TABLE = sig
 
   type key
 
-  val create : ?random:bool -> int -> 'a t
+  val create : entry_type:string -> ?random:bool -> int -> 'a t
 
   val find : 'a t -> key -> 'a option
 
@@ -398,7 +398,7 @@ end = struct
       {
         param;
         queue = Lwt_pipe.Unbounded.create ();
-        pending = Table.create ~random:true 17;
+        pending = Table.create ~entry_type:"pending_requests" ~random:true 17;
         events = Lwt.return_nil;
         canceler = Lwt_canceler.create ();
         worker = Lwt.return_unit;
@@ -515,10 +515,11 @@ module Make
       (fun key -> Timeout key)
 
   let read s k =
+    let open Lwt_result_syntax in
     match Memory_table.find s.memory k with
     | None -> trace (Missing_data k) @@ Disk_table.read s.disk k
     | Some (Found v) -> return v
-    | Some (Pending _) -> fail (Missing_data k)
+    | Some (Pending _) -> tzfail (Missing_data k)
 
   let wrap s k ?timeout t =
     let open Lwt_syntax in
@@ -532,13 +533,13 @@ module Make
             if data.waiters = 0 then (
               Memory_table.remove s.memory k ;
               Scheduler.notify_cancellation s.scheduler k ;
-              Lwt.wakeup_later w (error (Canceled k)))) ;
+              Lwt.wakeup_later w (Result_syntax.tzfail (Canceled k)))) ;
     match timeout with
     | None -> t
     | Some delay ->
         let timeout =
           let* () = Systime_os.sleep delay in
-          Lwt_tzresult_syntax.fail (Timeout k)
+          Lwt_result_syntax.tzfail (Timeout k)
         in
         Lwt.pick [t; timeout]
 
@@ -628,17 +629,19 @@ module Make
   let clear_or_cancel s k =
     match Memory_table.find s.memory k with
     | None -> ()
-    | Some (Pending {wakener = w; _}) ->
-        Scheduler.notify_cancellation s.scheduler k ;
-        Memory_table.remove s.memory k ;
-        Lwt.wakeup_later w (error (Canceled k))
+    | Some (Pending status) ->
+        if status.waiters <= 1 then (
+          Scheduler.notify_cancellation s.scheduler k ;
+          Memory_table.remove s.memory k ;
+          Lwt.wakeup_later status.wakener (Result_syntax.tzfail (Canceled k)))
+        else status.waiters <- status.waiters - 1
     | Some (Found _) -> Memory_table.remove s.memory k
 
   let watch s = Lwt_watcher.create_stream s.input
 
   let create ?random_table:random ?global_input request_param disk =
     let scheduler = Scheduler.create request_param in
-    let memory = Memory_table.create ?random 17 in
+    let memory = Memory_table.create ~entry_type:"entries" ?random 17 in
     let input = Lwt_watcher.create_input () in
     {scheduler; disk; memory; input; global_input}
 

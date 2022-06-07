@@ -47,7 +47,7 @@ module Raw_context_tests = struct
      constant value `uncommitted` for which we know the corresponding root and
      tests that the returned root is as expected. *)
   let commitments_add_uncommitted () =
-    Context.init 1 >>=? fun (b, _) ->
+    Context.init1 () >>=? fun (b, _contract) ->
     Raw_context.prepare
       b.context
       ~level:b.header.shell.level
@@ -86,7 +86,7 @@ module Raw_context_tests = struct
      however committing to disk twice the same nf causes a storage error by
      trying to initialize the same key twice. *)
   let nullifier_double () =
-    Context.init 1 >>=? fun (b, _) ->
+    Context.init1 () >>=? fun (b, _contract) ->
     Raw_context.prepare
       b.context
       ~level:b.header.shell.level
@@ -115,7 +115,7 @@ module Raw_context_tests = struct
      memory). We then check that nullifier_mem answers true for those two lists
      and false for a third one. *)
   let nullifier_test () =
-    Context.init 1 >>=? fun (b, _) ->
+    Context.init1 () >>=? fun (b, _contract) ->
     Raw_context.prepare
       b.context
       ~level:b.header.shell.level
@@ -170,7 +170,7 @@ module Raw_context_tests = struct
   let cm_cipher_test () =
     Random.self_init () ;
     let memo_size = Random.int 200 in
-    Context.init 1 >>=? fun (b, _) ->
+    Context.init1 () >>=? fun (b, _contract) ->
     Raw_context.prepare
       b.context
       ~level:b.header.shell.level
@@ -212,7 +212,7 @@ module Raw_context_tests = struct
   let list_insertion_test () =
     Random.self_init () ;
     let memo_size = Random.int 200 in
-    Context.init 1 >>=? fun (b, _) ->
+    Context.init1 () >>=? fun (b, _contract) ->
     Raw_context.prepare
       b.context
       ~level:b.header.shell.level
@@ -287,7 +287,7 @@ module Raw_context_tests = struct
         (Int32.to_int Sapling_storage.Roots.size + 10)
         (fun _ -> gen_root ())
     in
-    Context.init 1 >>=? fun (b, _) ->
+    Context.init1 () >>=? fun (b, _contract) ->
     Raw_context.prepare
       b.context
       ~level:b.header.shell.level
@@ -347,7 +347,7 @@ module Raw_context_tests = struct
     >>=? fun _ -> return_unit
 
   let test_get_memo_size () =
-    Context.init 1 >>=? fun (b, _) ->
+    Context.init1 () >>=? fun (b, _contract) ->
     Raw_context.prepare
       b.context
       ~level:b.header.shell.level
@@ -383,6 +383,7 @@ module Alpha_context_tests = struct
         []
         sk
         "anti-replay"
+        ~bound_data:""
         ps
     in
     verify_update ctx vt ~memo_size:0 |> assert_some >>=? fun _ ->
@@ -422,6 +423,47 @@ module Alpha_context_tests = struct
     List.fold_left_es
       (fun ctx vt ->
         verify_update ctx ~id vt |> assert_some >|=? fun (ctx, _id) -> ctx)
+      ctx
+      vts
+    >|=? fun _ctx ->
+    let vtime_transfers = Unix.gettimeofday () -. start in
+    Printf.printf "valdtr_txs %f\n" vtime_transfers
+
+  (* Same as before but for the legacy instruction. *)
+  let test_bench_phases_legacy () =
+    init () >>=? fun ctx ->
+    let rounds = 5 in
+    Printf.printf "\nrounds: %d\n" rounds ;
+    let w = wallet_gen () in
+    let cs = Tezos_sapling.Storage.empty ~memo_size:8 in
+    (* one verify_update to get the id *)
+    let vt = transfer_legacy w cs [] in
+    verify_update_legacy ctx vt |> assert_some >>=? fun (ctx, id) ->
+    client_state_alpha ctx id >>=? fun cs ->
+    let start = Unix.gettimeofday () in
+    let vts = List.map (fun _ -> transfer_legacy w cs []) (1 -- rounds) in
+    let ctime_shields = Unix.gettimeofday () -. start in
+    Printf.printf "client_shields %f\n" ctime_shields ;
+    let start = Unix.gettimeofday () in
+    List.fold_left_es
+      (fun ctx vt ->
+        verify_update_legacy ctx ~id vt |> assert_some >|=? fun (ctx, _id) ->
+        ctx)
+      ctx
+      vts
+    >>=? fun ctx ->
+    let vtime_shields = Unix.gettimeofday () -. start in
+    Printf.printf "valdtr_shields %f\n" vtime_shields ;
+    client_state_alpha ctx id >>=? fun cs ->
+    let start = Unix.gettimeofday () in
+    let vts = List.map (fun i -> transfer_legacy w cs [i]) (1 -- rounds) in
+    let ctime_transfers = Unix.gettimeofday () -. start in
+    Printf.printf "client_txs %f\n" ctime_transfers ;
+    let start = Unix.gettimeofday () in
+    List.fold_left_es
+      (fun ctx vt ->
+        verify_update_legacy ctx ~id vt |> assert_some >|=? fun (ctx, _id) ->
+        ctx)
       ctx
       vts
     >|=? fun _ctx ->
@@ -566,13 +608,7 @@ module Interpreter_tests = struct
     >>=? fun (dst, b1, anti_replay) ->
     let wa = wallet_gen () in
     let (list_transac, total) =
-      shield
-        ~memo_size
-        wa.sk
-        4
-        wa.vk
-        (Format.sprintf "Pair 0x%s None")
-        anti_replay
+      shield ~memo_size wa.sk 4 wa.vk (Format.sprintf "0x%s") anti_replay
     in
     let parameters = parameters_of_list list_transac in
     (* a does a list of shield transaction *)
@@ -580,13 +616,7 @@ module Interpreter_tests = struct
     >>=? fun (b2, _state) ->
     (* we shield again on another block, forging with the empty state *)
     let (list_transac, total) =
-      shield
-        ~memo_size
-        wa.sk
-        4
-        wa.vk
-        (Format.sprintf "Pair 0x%s None")
-        anti_replay
+      shield ~memo_size wa.sk 4 wa.vk (Format.sprintf "0x%s") anti_replay
     in
     let parameters = parameters_of_list list_transac in
     (* a does a list of shield transaction *)
@@ -612,6 +642,16 @@ module Interpreter_tests = struct
         (fun addr -> Tezos_sapling.Forge.make_output addr 1L (Bytes.create 8))
         list_addr
     in
+    (let pkh =
+       Alpha_context.Contract.is_implicit src1
+       |> WithExceptions.Option.get ~loc:__LOC__
+     in
+     (* dummy context used only for pack_data *)
+     Block.alpha_context
+       [(Account.activator_account, Tez.of_mutez_exn 100_000_000_000L)]
+     >>=? fun ctx ->
+     Script_ir_translator.pack_data ctx Script_typed_ir.key_hash_t pkh >>= wrap)
+    >>=? fun (bound_data, _) ->
     let hex_transac =
       to_hex
         (Tezos_sapling.Forge.forge_transaction
@@ -621,22 +661,15 @@ module Interpreter_tests = struct
            list_forge_output
            wa.sk
            anti_replay
+           ~bound_data:(Bytes.to_string bound_data)
            state)
         Tezos_sapling.Core.Client.UTXO.transaction_encoding
     in
-    let hex_pkh =
-      to_hex
-        (Alpha_context.Contract.is_implicit src1
-        |> WithExceptions.Option.get ~loc:__LOC__)
-        Signature.Public_key_hash.encoding
-    in
-    let string =
-      Format.sprintf "{Pair 0x%s (Some 0x%s) }" hex_transac hex_pkh
-    in
+    let string = Format.sprintf "{0x%s}" hex_transac in
     let parameters =
       Alpha_context.Script.(lazy_expr (Expr.from_string string))
     in
-    (* a transfers to b and unshield some money to src_2 (the pkh) *)
+    (* a transfers to b and unshield some money to src_1 (the pkh) *)
     transac_and_sync ~memo_size b3 parameters 0 src0 dst baker
     >>=? fun (b4, state) ->
     Context.Contract.balance (B b4) src1 >>=? fun balance_after_shield ->
@@ -676,17 +709,53 @@ module Interpreter_tests = struct
            [output]
            wb.sk
            anti_replay
+           ~bound_data:""
            state)
         Tezos_sapling.Core.Client.UTXO.transaction_encoding
     in
-    let string = Format.sprintf "{Pair 0x%s None }" hex_transac in
+    let string = Format.sprintf "{0x%s}" hex_transac in
     let parameters =
       Alpha_context.Script.(lazy_expr (Expr.from_string string))
     in
     (* b transfers to a with dummy inputs and outputs *)
     transac_and_sync ~memo_size b4 parameters 0 src0 dst baker
-    >>=? fun (b, _state) ->
+    >>=? fun (b, state) ->
     (* Here we fail by doing the same transaction again*)
+    Incremental.begin_construction b >>=? fun incr ->
+    let fee = Test_tez.of_int 10 in
+    Op.transaction ~fee (B b) src0 dst Tez.zero ~parameters
+    >>=? fun operation ->
+    Incremental.add_operation (* TODO make more precise *)
+      ~expect_failure:(fun _ -> return_unit)
+      incr
+      operation
+    >>=? fun _incr ->
+    (* Here we fail by changing the field bound_data*)
+    let orginal_transac =
+      Tezos_sapling.Forge.forge_transaction
+        ~number_dummy_inputs:2
+        ~number_dummy_outputs:2
+        list_forge_input
+        [output]
+        wb.sk
+        anti_replay
+        ~bound_data:"right"
+        state
+    in
+    let modified_transac =
+      Tezos_sapling.Core.Validator.UTXO.
+        {orginal_transac with bound_data = "wrong"}
+    in
+    let string =
+      Format.sprintf
+        "{0x%s}"
+        (to_hex
+           modified_transac
+           Tezos_sapling.Core.Client.UTXO.transaction_encoding)
+    in
+    let parameters =
+      Alpha_context.Script.(lazy_expr (Expr.from_string string))
+    in
     Incremental.begin_construction b >>=? fun incr ->
     let fee = Test_tez.of_int 10 in
     Op.transaction ~fee (B b) src0 dst Tez.zero ~parameters
@@ -788,7 +857,7 @@ module Interpreter_tests = struct
     >>=? fun (dst, block_start, anti_replay) ->
     let {sk; vk} = wallet_gen () in
     let hex_transac_1 = hex_shield ~memo_size {sk; vk} anti_replay in
-    let string_1 = Format.sprintf "{Pair %s None }" hex_transac_1 in
+    let string_1 = Format.sprintf "{%s}" hex_transac_1 in
     let parameters_1 =
       Alpha_context.Script.(lazy_expr (Expr.from_string string_1))
     in
@@ -812,10 +881,11 @@ module Interpreter_tests = struct
              [output]
              sk
              anti_replay
+             ~bound_data:""
              state)
           Tezos_sapling.Core.Client.UTXO.transaction_encoding
     in
-    let string_2 = Format.sprintf "{Pair %s None }" hex_transac_2 in
+    let string_2 = Format.sprintf "{%s}" hex_transac_2 in
     let parameters_2 =
       Alpha_context.Script.(lazy_expr (Expr.from_string string_2))
     in
@@ -881,7 +951,7 @@ module Interpreter_tests = struct
         ~allow_forged_in_storage:true
         script
       >>= wrap
-      >>=? fun (Ex_script script, ctxt) ->
+      >>=? fun (Ex_script (Script script), ctxt) ->
       Script_ir_translator.get_single_sapling_state
         ctxt
         script.storage_type
@@ -979,7 +1049,7 @@ module Interpreter_tests = struct
      let open Script_typed_ir in
      let state_ty = sapling_state_t ~memo_size in
      pair_t (-1) state_ty state_ty)
-    >>??= fun tytype ->
+    >>??= fun (Ty_ex_c tytype) ->
     Script_ir_translator.parse_storage
       ctx_without_gas
       ~legacy:true
@@ -1065,6 +1135,10 @@ let tests =
       "test_bench_phases"
       `Slow
       Alpha_context_tests.test_bench_phases;
+    Tztest.tztest
+      "test_bench_phases_legacy"
+      `Quick
+      Alpha_context_tests.test_bench_phases_legacy;
     Tztest.tztest
       "test_bench_fold_over_same_token"
       `Slow

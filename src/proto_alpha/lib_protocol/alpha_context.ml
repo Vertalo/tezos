@@ -3,6 +3,7 @@
 (* Open Source License                                                       *)
 (* Copyright (c) 2018 Dynamic Ledger Solutions, Inc. <contact@tezos.com>     *)
 (* Copyright (c) 2019-2022 Nomadic Labs <contact@nomadic-labs.com>           *)
+(* Copyright (c) 2021-2022 Trili Tech, <contact@trili.tech>                  *)
 (*                                                                           *)
 (* Permission is hereby granted, free of charge, to any person obtaining a   *)
 (* copy of this software and associated documentation files (the "Software"),*)
@@ -52,9 +53,10 @@ end
 module Slot = Slot_repr
 
 module Sc_rollup = struct
+  module Tick = Sc_rollup_tick_repr
   include Sc_rollup_repr
+  module Inbox = Sc_rollup_inbox_repr
   include Sc_rollup_storage
-  module Inbox = Sc_rollup_inbox
 end
 
 module Entrypoint = Entrypoint_repr
@@ -84,24 +86,13 @@ module Block_payload = struct
   include Block_payload_repr
 end
 
-module First_level_of_tenderbake = struct
-  let get = Storage.Tenderbake.First_level.get
+module First_level_of_protocol = struct
+  let get = Storage.Tenderbake.First_level_of_protocol.get
 end
 
+module Ratio = Ratio_repr
 module Raw_level = Raw_level_repr
 module Cycle = Cycle_repr
-module Script_string = Script_string_repr
-module Script_int = Script_int_repr
-
-module Script_timestamp = struct
-  include Script_timestamp_repr
-
-  let now ctxt =
-    let {Constants_repr.minimal_block_delay; _} = Raw_context.constants ctxt in
-    let first_delay = Period_repr.to_seconds minimal_block_delay in
-    let current_timestamp = Raw_context.predecessor_timestamp ctxt in
-    Time.add current_timestamp first_delay |> Timestamp.to_seconds |> of_int64
-end
 
 module Script = struct
   include Michelson_v1_primitives
@@ -135,6 +126,7 @@ type signature = Signature.t
 module Constants = struct
   include Constants_repr
   include Constants_storage
+  module Parametric = Constants_parametric_repr
 
   let round_durations ctxt = Raw_context.round_durations ctxt
 
@@ -232,21 +224,19 @@ module Contract = struct
 
   let get_manager_key = Contract_manager_storage.get_manager_key
 
-  module Internal_for_tests = Contract_repr
+  module Internal_for_tests = struct
+    include Contract_repr
+    include Contract_storage
+  end
 end
 
 module Tx_rollup_level = Tx_rollup_level_repr
-module Tx_rollup_commitment_hash = Tx_rollup_commitment_repr.Commitment_hash
+module Tx_rollup_commitment_hash = Tx_rollup_commitment_repr.Hash
+module Tx_rollup_message_result_hash = Tx_rollup_message_result_hash_repr
 
 module Tx_rollup = struct
   include Tx_rollup_repr
   include Tx_rollup_storage
-
-  let hash_ticket ctxt tx_rollup ~contents ~ticketer ~ty =
-    let open Micheline in
-    let owner = String (dummy_location, to_b58check tx_rollup) in
-    Ticket_hash_builder.make ctxt ~ticketer ~ty ~contents ~owner
-
   module Internal_for_tests = Tx_rollup_repr
 end
 
@@ -260,26 +250,31 @@ module Tx_rollup_state = struct
   end
 end
 
+module Tx_rollup_withdraw = Tx_rollup_withdraw_repr
+module Tx_rollup_withdraw_list_hash = Tx_rollup_withdraw_list_hash_repr
+module Tx_rollup_message_result = Tx_rollup_message_result_repr
+
+module Tx_rollup_reveal = struct
+  include Tx_rollup_reveal_repr
+  include Tx_rollup_reveal_storage
+end
+
 module Tx_rollup_message = struct
   include Tx_rollup_message_repr
-  include Tx_rollup_message_builder
 
   let make_message msg = (msg, size msg)
 
   let make_batch string = make_message @@ Batch string
 
-  let make_deposit destination ticket_hash amount =
-    make_message @@ Deposit {destination; ticket_hash; amount}
+  let make_deposit sender destination ticket_hash amount =
+    make_message @@ Deposit {sender; destination; ticket_hash; amount}
 end
+
+module Tx_rollup_message_hash = Tx_rollup_message_hash_repr
 
 module Tx_rollup_inbox = struct
   include Tx_rollup_inbox_repr
   include Tx_rollup_inbox_storage
-
-  module Internal_for_tests = struct
-    include Tx_rollup_inbox_repr
-    include Tx_rollup_inbox_storage
-  end
 end
 
 module Tx_rollup_commitment = struct
@@ -287,6 +282,7 @@ module Tx_rollup_commitment = struct
   include Tx_rollup_commitment_storage
 end
 
+module Tx_rollup_hash = Tx_rollup_hash_builder
 module Tx_rollup_errors = Tx_rollup_errors_repr
 module Global_constants_storage = Global_constants_storage
 
@@ -360,6 +356,28 @@ module Sapling = struct
   type updates = Sapling_state.updates
 
   type alloc = Sapling_state.alloc = {memo_size : Sapling_repr.Memo_size.t}
+
+  module Legacy = struct
+    include Sapling.UTXO.Legacy
+
+    let transaction_get_memo_size transaction =
+      match transaction.outputs with
+      | [] -> None
+      | {ciphertext; _} :: _ ->
+          (* Encoding ensures all ciphertexts have the same memo size. *)
+          Some (Sapling.Ciphertext.get_memo_size ciphertext)
+
+    let transaction_in_memory_size transaction =
+      transaction_in_memory_size (cast transaction)
+
+    let verify_update ctxt state transaction key =
+      verify_update ctxt state (cast transaction) key
+  end
+end
+
+module Bond_id = struct
+  include Bond_id_repr
+  module Internal_for_tests = Contract_storage
 end
 
 module Receipt = Receipt_repr
@@ -387,7 +405,7 @@ end
 module Stake_distribution = struct
   let snapshot = Stake_storage.snapshot
 
-  let compute_snapshot_index = Stake_storage.compute_snapshot_index
+  let compute_snapshot_index = Delegate_storage.compute_snapshot_index
 
   let baking_rights_owner = Delegate.baking_rights_owner
 
@@ -487,7 +505,11 @@ let internal_nonce_already_recorded =
 let description = Raw_context.description
 
 module Parameters = Parameters_repr
-module Liquidity_baking = Liquidity_baking_repr
+
+module Liquidity_baking = struct
+  include Liquidity_baking_repr
+  include Liquidity_baking_storage
+end
 
 module Ticket_hash = struct
   include Ticket_hash_repr
@@ -500,3 +522,7 @@ end
 
 module Token = Token
 module Cache = Cache_repr
+
+module Internal_for_tests = struct
+  let to_raw x = x
+end

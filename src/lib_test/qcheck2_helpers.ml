@@ -128,6 +128,8 @@ let string_fixed n = QCheck2.Gen.(string_size (pure n))
 
 let bytes_gen = QCheck2.Gen.(map Bytes.of_string string)
 
+let bytes_fixed_gen size = QCheck2.Gen.map Bytes.of_string (string_fixed size)
+
 let sublist : 'a list -> 'a list QCheck2.Gen.t =
   (* [take_n n l] returns the first [n] elements of [l].
      We do not reuse the implementation from [Stdlib.TzList] to avoid a
@@ -148,7 +150,7 @@ let sublist : 'a list -> 'a list QCheck2.Gen.t =
 let holey (l : 'a list) : 'a list QCheck2.Gen.t =
   let open QCheck2.Gen in
   (* Generate as many Booleans as there are elements in [l] *)
-  let+ bools = list_size (return (List.length l)) bool in
+  let+ bools = list_repeat (List.length l) bool in
   let rev_result =
     List.fold_left
       (fun acc (elem, pick) -> if pick then elem :: acc else acc)
@@ -181,7 +183,14 @@ let endpoint_gen =
   let+ s = url_string_gen in
   Uri.of_string s
 
-module MakeMapGen (Map : Stdlib.Map.S) = struct
+module MakeMapGen (Map : sig
+  type 'a t
+
+  type key
+
+  val of_seq : (key * 'a) Seq.t -> 'a t
+end) =
+struct
   open QCheck2
 
   let gen_of_size (size_gen : int Gen.t) (key_gen : Map.key Gen.t)

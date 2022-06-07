@@ -275,6 +275,8 @@ module Points = struct
 
   let fold_known pool ~init ~f = P2p_point.Table.fold f pool.known_points init
 
+  let iter_known f pool = P2p_point.Table.iter f pool.known_points
+
   let fold_connected pool ~init ~f =
     P2p_point.Table.fold f pool.connected_points init
 
@@ -350,8 +352,12 @@ module Peers = struct
 
   let fold_known pool ~init ~f = P2p_peer.Table.fold f pool.known_peer_ids init
 
+  let iter_known f pool = P2p_peer.Table.iter f pool.known_peer_ids
+
   let fold_connected pool ~init ~f =
     P2p_peer.Table.fold f pool.connected_peer_ids init
+
+  let iter_connected f pool = P2p_peer.Table.iter f pool.connected_peer_ids
 
   let add_connected pool peer_id peer_info =
     P2p_peer.Table.add pool.connected_peer_ids peer_id peer_info
@@ -385,6 +391,14 @@ module Connection = struct
         match P2p_peer_state.get peer_info with
         | Running {data; _} -> f peer_id data acc
         | _ -> acc)
+
+  let iter f pool =
+    Peers.iter_connected
+      (fun peer_id peer_info ->
+        match P2p_peer_state.get peer_info with
+        | Running {data; _} -> f peer_id data
+        | _ -> ())
+      pool
 
   let list pool =
     fold pool ~init:[] ~f:(fun peer_id c acc -> (peer_id, c) :: acc)
@@ -431,10 +445,11 @@ module Connection = struct
     random_elt candidates
 
   let propose_swap_request pool =
-    let ( >?? ) = Option.bind in
-    random_connection ~no_private:true pool >?? fun recipient ->
-    random_addr ~different_than:recipient ~no_private:true pool
-    >?? fun (proposed_point, proposed_peer_id) ->
+    let open Option_syntax in
+    let* recipient = random_connection ~no_private:true pool in
+    let* (proposed_point, proposed_peer_id) =
+      random_addr ~different_than:recipient ~no_private:true pool
+    in
     Some (proposed_point, proposed_peer_id, recipient)
 
   let find_by_peer_id pool peer_id =

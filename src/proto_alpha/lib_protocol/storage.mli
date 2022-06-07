@@ -179,6 +179,28 @@ module Contract : sig
       with type key = Contract_repr.t
        and type value = Z.t
        and type t := Raw_context.t
+
+  (** Associates a contract and a bond_id with a bond, i.e. an amount of tez
+      that is frozen. *)
+  module Frozen_bonds :
+    Non_iterable_indexed_carbonated_data_storage
+      with type key = Bond_id_repr.t
+       and type value = Tez_repr.t
+       and type t := Raw_context.t * Contract_repr.t
+
+  val fold_bond_ids :
+    Raw_context.t * Contract_repr.t ->
+    order:[`Sorted | `Undefined] ->
+    init:'a ->
+    f:(Bond_id_repr.t -> 'a -> 'a Lwt.t) ->
+    'a Lwt.t
+
+  (** Associates a contract with the total of all its frozen bonds. *)
+  module Total_frozen_bonds :
+    Indexed_data_storage
+      with type key = Contract_repr.t
+       and type value = Tez_repr.t
+       and type t := Raw_context.t
 end
 
 module Big_map : sig
@@ -401,10 +423,6 @@ module Vote : sig
       with type value = Protocol_hash.t
        and type t := Raw_context.t
 
-  (* To be removed when removing migration from Ithaca *)
-  module Legacy_listings_size :
-    Single_data_storage with type value = int32 and type t := Raw_context.t
-
   (** Sum of voting weights of all delegates. *)
   module Voting_power_in_listings :
     Single_data_storage with type value = int64 and type t := Raw_context.t
@@ -521,9 +539,9 @@ end
 
 module Liquidity_baking : sig
   (** Exponential moving average (ema) of flags set in protocol_data.contents.
-    If at any block it's above the threshold set in constants,
-    liquidity baking permanently shuts off. **)
-  module Escape_ema :
+    The liquidity baking subsidy is not sent to the CPMM if this EMA is above
+    the threshold set in constants. **)
+  module Toggle_ema :
     Single_data_storage with type t := Raw_context.t and type value = Int32.t
 
   (** Constant product market maker contract that receives liquidity baking subsidy. **)
@@ -558,12 +576,20 @@ module Ticket_balance : sig
       with type t := Raw_context.t
        and type key = Ticket_hash_repr.t
        and type value = Z.t
+
+  module Paid_storage_space :
+    Single_data_storage with type t := Raw_context.t and type value = Z.t
+
+  module Used_storage_space :
+    Single_data_storage with type t := Raw_context.t and type value = Z.t
 end
 
 (** Tenderbake *)
 
 module Tenderbake : sig
-  module First_level :
+  (** [First_level_of_protocol] stores the level of the first block of
+      this protocol. *)
+  module First_level_of_protocol :
     Single_data_storage
       with type t := Raw_context.t
        and type value = Raw_level_repr.t
@@ -593,67 +619,41 @@ module Tx_rollup : sig
        and type value = Tx_rollup_state_repr.t
        and type t := Raw_context.t
 
-  (** Each inbox has a set of metadata attached to it. See
-      {!Tx_rollup_inbox_repr.metadata} for a description of the actual
-      content. *)
-  module Inbox_metadata :
+  (** The representation of an inbox. See {!Tx_rollup_inbox_repr.t}
+     for a description of the actual content. *)
+  module Inbox :
     Non_iterable_indexed_carbonated_data_storage
-      with type t := Raw_context.t * Tx_rollup_level_repr.t
-       and type key = Tx_rollup_repr.t
-       and type value = Tx_rollup_inbox_repr.metadata
+      with type t := Raw_context.t * Tx_rollup_repr.t
+       and type key = Tx_rollup_level_repr.t
+       and type value = Tx_rollup_inbox_repr.t
 
-  (** A carbonated storage to store the hashes of the messages
-      appended in an inbox. The key is the batch number, which is
-      sequentially assigned from 0.
+  (** A carbonated storage of the set of withdrawals revealed of those
+      potentially associated to each message of an inbox. The key is the message
+      number, which is sequentially assigned from 0. *)
+  module Revealed_withdrawals :
+    Non_iterable_indexed_carbonated_data_storage
+      with type t := Raw_context.t * Tx_rollup_repr.t
+       and type key = Tx_rollup_level_repr.t
+       and type value = Bitset.t
 
-      The actual content is already stored in the block (as part of
-      the operations), so by only storing the hashes we avoid
-      unnecessary storage duplication. *)
-  module Inbox_contents : sig
-    include
-      Non_iterable_indexed_carbonated_data_storage
-        with type t :=
-              (Raw_context.t * Tx_rollup_level_repr.t) * Tx_rollup_repr.t
-         and type key = int32
-         and type value = Tx_rollup_message_repr.hash
-
-    (** [list_values ?offset ?length ((ctxt, tx_level), rollup)]
-        returns the list of message hashes of the inbox of [rollup] at
-        [tx_level].
-
-        [length] and [offset] can be used to retrieve a subset of the
-        result. [length] is the maximum number of elements to fetch. A
-        negative [length] produces an empty list of results. [offset]
-        is the number of elements to ignore. If [offset] is negative,
-        then it is treated as if it were equal to [0].
-
-        {b: Note:} This is the same HACK as [Big_map.Contents]. **)
-    val list_values :
-      ?offset:int ->
-      ?length:int ->
-      (Raw_context.t * Tx_rollup_level_repr.t) * Tx_rollup_repr.t ->
-      (Raw_context.t * Tx_rollup_message_repr.hash list) tzresult Lwt.t
-  end
-
-  (* A rollup can have at most one commitment per rollup level. Some
-     metadata are sauved in addition to the commitment itself. See
+  (** A rollup can have at most one commitment per rollup level. Some
+      metadata are saved in addition to the commitment itself. See
      {!Tx_rollup_commitment_repr.Submitted_commitment.t} for the exact
      content. *)
   module Commitment :
     Non_iterable_indexed_carbonated_data_storage
-      with type key = Tx_rollup_level_repr.t * Tx_rollup_repr.t
+      with type key = Tx_rollup_level_repr.t
        and type value = Tx_rollup_commitment_repr.Submitted_commitment.t
-       and type t := Raw_context.t
+       and type t := Raw_context.t * Tx_rollup_repr.t
 
-  (* This stores information about which contracts have bonds
+  (** This stores information about which contracts have bonds
      for each rollup, and how many commitments those bonds
      stake. *)
   module Commitment_bond :
     Non_iterable_indexed_carbonated_data_storage
-      with type key = Tx_rollup_repr.t * Signature.public_key_hash
-      (* The value here is the number of unfinalized commitments *)
+      with type key = Signature.public_key_hash
        and type value = int
-       and type t := Raw_context.t
+       and type t := Raw_context.t * Tx_rollup_repr.t
 end
 
 module Sc_rollup : sig
@@ -666,9 +666,11 @@ module Sc_rollup : sig
 
       - a PVM kind (provided at creation time, read-only)
       - a boot sector (provided at creation time, read-only)
+      - the L1 block level at which the rollup was created
       - a merkelized inbox, of which only the root hash is stored
-      - a tree of commitments, rooted at the last finalized commitment
+      - a tree of commitments, rooted at the last cemented commitment
       - a map from stakers to commitments
+      - a map from commitments to the time (level) of its first insertion
 
       For performance reasons we also store (per rollup):
 
@@ -686,16 +688,22 @@ module Sc_rollup : sig
   module Boot_sector :
     Indexed_data_storage
       with type key = Sc_rollup_repr.t
-       and type value = Sc_rollup_repr.PVM.boot_sector
+       and type value = string
+       and type t := Raw_context.t
+
+  module Initial_level :
+    Indexed_data_storage
+      with type key = Sc_rollup_repr.t
+       and type value = Raw_level_repr.t
        and type t := Raw_context.t
 
   module Inbox :
     Non_iterable_indexed_carbonated_data_storage
       with type key = Sc_rollup_repr.t
-       and type value = Sc_rollup_inbox.t
+       and type value = Sc_rollup_inbox_repr.t
        and type t := Raw_context.t
 
-  module Last_final_commitment :
+  module Last_cemented_commitment :
     Non_iterable_indexed_carbonated_data_storage
       with type key = Sc_rollup_repr.t
        and type value = Sc_rollup_repr.Commitment_hash.t
@@ -707,13 +715,13 @@ module Sc_rollup : sig
        and type value = Sc_rollup_repr.Commitment_hash.t
        and type t = Raw_context.t * Sc_rollup_repr.t
 
-  (** Cache: This should always be the size of [Stakers].
+  (** Cache: This should always be the number of entries in [Stakers].
 
       Combined with {!Commitment_stake_count} (see below), this ensures we can
-      check that all stakers agree on a commitment prior to finalization in
+      check that all stakers agree on a commitment prior to cementing it in
       O(1) - rather than O(n) reads.
     *)
-  module Stakers_size :
+  module Staker_count :
     Non_iterable_indexed_carbonated_data_storage
       with type key = Sc_rollup_repr.t
        and type value = int32
@@ -749,5 +757,11 @@ module Sc_rollup : sig
     Non_iterable_indexed_carbonated_data_storage
       with type key = Sc_rollup_repr.Commitment_hash.t
        and type value = int32
+       and type t = Raw_context.t * Sc_rollup_repr.t
+
+  module Commitment_added :
+    Non_iterable_indexed_carbonated_data_storage
+      with type key = Sc_rollup_repr.Commitment_hash.t
+       and type value = Raw_level_repr.t
        and type t = Raw_context.t * Sc_rollup_repr.t
 end

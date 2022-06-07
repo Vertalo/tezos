@@ -23,10 +23,35 @@
 (*                                                                           *)
 (*****************************************************************************)
 
+(** Metrics associated to the mempool *)
+module Mempool : sig
+  val set_applied_collector : (unit -> float) -> unit
+
+  val set_prechecked_collector : (unit -> float) -> unit
+
+  val set_refused_collector : (unit -> float) -> unit
+
+  val set_branch_refused_collector : (unit -> float) -> unit
+
+  val set_branch_delayed_collector : (unit -> float) -> unit
+
+  val set_outdated_collector : (unit -> float) -> unit
+
+  val set_unprocessed_collector : (unit -> float) -> unit
+end
+
 module Worker : sig
   type t
 
   val update : t -> Worker_types.request_status -> unit
+end
+
+module Distributed_db : sig
+  type t = {table_length : Prometheus.Gauge.t}
+
+  val init : kind:string -> entry_type:string -> t
+
+  val update : t -> length:int -> unit
 end
 
 module Block_validator : sig
@@ -55,4 +80,8 @@ module Chain_validator : sig
   }
 
   val init : string trace -> Chain_id.t -> t
+end
+
+module Version : sig
+  val init : ('a, 'b, 'c) P2p.t -> unit
 end

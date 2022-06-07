@@ -117,6 +117,11 @@ module type VIEW = sig
     init:'a ->
     f:(key -> tree -> 'a -> 'a Lwt.t) ->
     'a Lwt.t
+
+  (** {2 Configuration} *)
+
+  (** [config t] is [t]'s hash configuration. *)
+  val config : t -> Config.t
 end
 
 module Kind = struct
@@ -228,12 +233,20 @@ module Proof_types = struct
       used to prove the correctness of operations such [Tree.length] and
       [Tree.list ~offset ~length] in an efficient way.
 
+      In proofs with [version.is_binary = false], an inode at depth 0 has a
+      [length] of at least [257]. Below that threshold a [Node] tag is used in
+      [tree]. That threshold is [3] when [version.is_binary = true].
+
       [proofs] contains the children proofs. It is a sparse list of ['a] values.
       These values are associated to their index in the list, and the list is
       kept sorted in increasing order of indices. ['a] can be a concrete proof
       or a hash of that proof.
-      - In proofs with version 0, inodes have at most 32 proofs
-        (indexed from 0 to 31). *)
+
+      In proofs with [version.is_binary = true], inodes have at most 2 proofs
+      (indexed 0 or 1).
+
+      In proofs with [version.is_binary = false], inodes have at most 32 proofs
+      (indexed from 0 to 31). *)
   type 'a inode = {length : int; proofs : (index * 'a) list}
 
   (** The type for inode extenders.
@@ -261,7 +274,12 @@ module Proof_types = struct
 
       [Node ls] proves that a a "flat" node containing the list of files [ls]
       exists in the store.
-      - In proofs with version 0, the length of [ls] is at most 256;
+
+      In proofs with [version.is_binary = true], the length of [ls] is at most
+      2.
+
+      In proofs with [version.is_binary = false], the length of [ls] is at most
+      256.
 
       [Blinded_node h] proves that a node with hash [h] exists in the store.
 
@@ -337,7 +355,7 @@ module Proof_types = struct
 
         The sequance [e_1 ... e_n] proves that the [e_1], ..., [e_n] are
         read in the store in sequence. *)
-    type t = elt Seq.t
+    type t = unit -> elt Seq.node
   end
 
   type stream = Stream.t
@@ -348,10 +366,19 @@ module Proof_types = struct
       [after p]. [state p]'s hash is [before p], and [state p] contains
       the minimal information for the computation to reach [after p].
 
-      [version p] is the proof version, currently only version 0 is supported.
-      - Proofs with version 0 have top-level nodes of size 256. Whenever a node
-        has more than 256 entries, it is converted into an inode tree with
-        an branching factor of 32. *)
+      [version p] is the proof version, it packs several informations.
+
+      [is_stream] discriminates between the stream proofs and the tree proofs.
+
+      [is_binary] discriminates between proofs emitted from
+      [Tezos_context(_memory).Context_binary] and
+      [Tezos_context(_memory).Context].
+
+      It will also help discriminate between the data encoding techniques used.
+
+      The version is meant to be decoded and encoded using the
+      {!Tezos_context_helpers.Context.decode_proof_version} and
+      {!Tezos_context_helpers.Context.encode_proof_version}. *)
   type 'a t = {
     version : int;
     before : kinded_hash;
@@ -375,6 +402,8 @@ module type PROOF_ENCODING = sig
 end
 
 module type S = sig
+  val equal_config : Config.t -> Config.t -> bool
+
   include VIEW with type key = string list and type value = bytes
 
   module Proof : PROOF
@@ -382,8 +411,10 @@ module type S = sig
   (** The type for context repositories. *)
   type index
 
-  (** The type of tree for which to build a shallow tree with [shallow] *)
-  type kinded_hash := [`Value of Context_hash.t | `Node of Context_hash.t]
+  (** The type of references to tree objects annotated with the type of that
+      object (either a value or a node). Used to build a shallow tree with
+      {!Tree.shallow} *)
+  type kinded_key
 
   module Tree : sig
     include
@@ -399,7 +430,7 @@ module type S = sig
     (** {2 Data Encoding} *)
 
     (** The type for in-memory, raw contexts. *)
-    type raw = [`Value of bytes | `Tree of raw TzString.Map.t]
+    type raw = [`Value of bytes | `Tree of raw String.Map.t]
 
     (** [raw_encoding] is the data encoding for raw trees. *)
     val raw_encoding : raw Data_encoding.t
@@ -415,9 +446,15 @@ module type S = sig
 
     val make_repo : unit -> repo Lwt.t
 
-    (** [shallow repo h] is the shallow tree having hash [h] based on
-        the repository [r]. *)
-    val shallow : repo -> kinded_hash -> tree
+    (** [shallow repo k] is the "shallow" tree having key [k] based on the
+        repository [repo]. A shallow tree is a tree that exists in an underlying
+        backend repository, but has not yet been loaded into memory from that
+        backend. *)
+    val shallow : repo -> kinded_key -> tree
+
+    val is_shallow : tree -> bool
+
+    val kinded_key : tree -> kinded_key option
   end
 
   (** [produce r h f] runs [f] on top of a real store [r], producing a proof and
@@ -430,7 +467,7 @@ module type S = sig
       Calling [produce_proof] recursively has an undefined behaviour. *)
   type ('proof, 'result) producer :=
     index ->
-    kinded_hash ->
+    kinded_key ->
     (tree -> (tree * 'result) Lwt.t) ->
     ('proof * 'result) Lwt.t
 
@@ -457,18 +494,29 @@ module type S = sig
       disconnected from any storage (i.e. [index]). It is possible to run
       operations on it as long as they don't require loading shallowed subtrees.
 
-      The result is [Error _] if the proof is rejected:
+      The result is [Error (`Msg _)] if the proof is rejected:
       - For tree proofs: when [p.before] is different from the hash of
         [p.state];
       - For tree and stream proofs: when [p.after] is different from the hash
         of [f p.state];
-      - For tree and stream proofs: when [f p.state] tries to access paths
-        invalid paths in [p.state];
-      - For stream proofs: when the proof is not empty once [f] is done. *)
+      - For tree proofs: when [f p.state] tries to access invalid paths in
+        [p.state];
+      - For stream proofs: when the proof is not consumed in the exact same
+        order it was produced;
+      - For stream proofs: when the proof is too short or not empty once [f] is
+        done.
+
+      @raise Failure if the proof version is invalid or incompatible with the
+      verifier. *)
   type ('proof, 'result) verifier :=
     'proof ->
     (tree -> (tree * 'result) Lwt.t) ->
-    (tree * 'result, [`Msg of string]) result Lwt.t
+    ( tree * 'result,
+      [ `Proof_mismatch of string
+      | `Stream_too_long of string
+      | `Stream_too_short of string ] )
+    result
+    Lwt.t
 
   (** The type for tree proofs.
 

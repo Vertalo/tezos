@@ -169,7 +169,7 @@ let () = Registration_helpers.register (module Compare_key_contract_benchmark)
 (* A simple ticket type for use in the benchmarks. *)
 let ticket_ty =
   let open Script_typed_ir in
-  WithExceptions.Result.get_ok ~loc:__LOC__ (ticket_t (-1) int_key)
+  WithExceptions.Result.get_ok ~loc:__LOC__ (ticket_t (-1) int_t)
 
 (* A dummy type generator, sampling linear terms of a given size.
    The generator always returns types of the shape:
@@ -188,8 +188,10 @@ let rec dummy_type_generator ~rng_state size =
   if size <= 1 then ticket_or_int
   else
     match (ticket_or_int, dummy_type_generator ~rng_state (size - 3)) with
-    | (Ex_ty l, Ex_ty r) ->
-        Ex_ty (match pair_t (-1) l r with Error _ -> assert false | Ok t -> t)
+    | (Ex_ty l, Ex_ty r) -> (
+        match pair_t (-1) l r with
+        | Error _ -> assert false
+        | Ok (Ty_ex_c t) -> Ex_ty t)
 
 (** A benchmark for {!Ticket_costs.Constants.cost_has_tickets_of_ty}. *)
 module Has_tickets_type_benchmark : Benchmark.S = struct
@@ -246,7 +248,7 @@ let ticket_sampler rng_state =
   let (pkh, _, _) = Signature.generate_key ~algo:Signature.Ed25519 ~seed () in
   let ticketer = Alpha_context.Contract.implicit_contract pkh in
   Script_typed_ir.
-    {ticketer; contents = Script_int_repr.zero; amount = Script_int_repr.one_n}
+    {ticketer; contents = Script_int.zero; amount = Script_int.one_n}
 
 (** A benchmark for {!Ticket_costs.Constants.cost_collect_tickets_step}. *)
 module Collect_tickets_benchmark : Benchmark.S = struct

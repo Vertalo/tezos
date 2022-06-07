@@ -41,6 +41,9 @@ type hooks = {
 
     Usage: [spawn command arguments]
 
+    If [log_command] is [true] (which is the default), log the command
+    being executed.
+
     If [log_status_on_exit] is [true] (which is the default), log the exit code
     when the process terminates.
 
@@ -52,6 +55,10 @@ type hooks = {
     output lines.
 
     Parameter [hooks] allows to attach some hooks to the process.
+    Warning: if you use [hooks], all the process output is stored in memory
+    until it finishes. So this can use a lot of memory. Also, note that [stdout]
+    is sent to the hook first, then [stderr]. The two outputs are not interleaved.
+    This is to make it more predictable for regression tests.
 
     Note that this function can only be called if [Background.register] is
     allowed (which is the case inside functions given to [Test.register]).
@@ -63,6 +70,7 @@ type hooks = {
     Example: [spawn "git" [ "log"; "-p" ]] *)
 val spawn :
   ?runner:Runner.t ->
+  ?log_command:bool ->
   ?log_status_on_exit:bool ->
   ?log_output:bool ->
   ?name:string ->
@@ -76,6 +84,7 @@ val spawn :
 (** Same as {!spawn}, but with a channel to send data to the process [stdin]. *)
 val spawn_with_stdin :
   ?runner:Runner.t ->
+  ?log_command:bool ->
   ?log_status_on_exit:bool ->
   ?log_output:bool ->
   ?name:string ->
@@ -145,6 +154,7 @@ val run :
   ?name:string ->
   ?color:Log.Color.t ->
   ?env:string Base.String_map.t ->
+  ?hooks:hooks ->
   ?expect_failure:bool ->
   string ->
   string list ->
@@ -174,6 +184,7 @@ val run_and_read_stdout :
   ?name:string ->
   ?color:Log.Color.t ->
   ?env:string Base.String_map.t ->
+  ?hooks:hooks ->
   ?expect_failure:bool ->
   string ->
   string list ->
@@ -188,6 +199,7 @@ val run_and_read_stderr :
   ?name:string ->
   ?color:Log.Color.t ->
   ?env:string Base.String_map.t ->
+  ?hooks:hooks ->
   ?expect_failure:bool ->
   string ->
   string list ->
@@ -196,11 +208,3 @@ val run_and_read_stderr :
 (** [program_path p] returns [Some path] if the shell command [command -v p]
     succeeds and prints [path]. Returns [None] otherwise. *)
 val program_path : string -> string option Lwt.t
-
-(** Processes with associated run functions.
-
-    Typically, processes are associated to run functions that parse their output
-    into values of type ['a]. See [Base.runnable] for an example. *)
-type nonrec 'a runnable = (t, 'a) Base.runnable
-
-val runnable_map : ('a -> 'b) -> 'a runnable -> 'b runnable

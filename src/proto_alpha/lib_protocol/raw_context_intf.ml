@@ -31,6 +31,10 @@
 (** The tree depth of a fold. See the [fold] function for more information. *)
 type depth = [`Eq of int | `Le of int | `Lt of int | `Ge of int | `Gt of int]
 
+(** The type for context configuration. If two trees or stores have the
+    same configuration, they will generate the same context hash. *)
+type config = Context.config
+
 module type VIEW = sig
   (* Same as [Environment_context.VIEW] but with extra getters and
      setters functions. *)
@@ -176,6 +180,25 @@ module type VIEW = sig
     init:'a ->
     f:(key -> tree -> 'a -> 'a Lwt.t) ->
     'a Lwt.t
+
+  (** {2 Hash configurations} *)
+
+  (** [config t] is [t]'s hash configuration. *)
+  val config : t -> config
+
+  (** [length t key] is an Lwt promise that resolves to the number of files and
+      sub-nodes stored under [k] in [t].
+
+      It is equivalent to [list t k >|= List.length] but has a constant-time
+      complexity.
+
+      Most of the time, this function does not perform any I/O as the length is
+      cached in the tree. It may perform one read to load the root node of the
+      tree in case it has not been loaded already. The initial constant is the
+      same between [list] and [length]. They both perform the same kind of I/O
+      reads. While [list] usually performs a linear number of reads, [length]
+      does at most one. *)
+  val length : t -> key -> int Lwt.t
 end
 
 module Kind = struct
@@ -274,12 +297,20 @@ module type PROOF = sig
       used to prove the correctness of operations such [Tree.length] and
       [Tree.list ~offset ~length] in an efficient way.
 
+      In proofs with [version.is_binary = false], an inode at depth 0 has a
+      [length] of at least [257]. Below that threshold a [Node] tag is used in
+      [tree]. That threshold is [3] when [version.is_binary = true].
+
       [proofs] contains the children proofs. It is a sparse list of ['a] values.
       These values are associated to their index in the list, and the list is
       kept sorted in increasing order of indices. ['a] can be a concrete proof
       or a hash of that proof.
-      - In proofs with version 0, inodes have at most 32 proofs
-        (indexed from 0 to 31). *)
+
+      In proofs with [version.is_binary = true], inodes have at most 2 proofs
+      (indexed 0 or 1).
+
+      In proofs with [version.is_binary = false], inodes have at most 32 proofs
+      (indexed from 0 to 31). *)
   type 'a inode = {length : int; proofs : (index * 'a) list}
 
   (** The type for inode extenders.
@@ -307,7 +338,12 @@ module type PROOF = sig
 
       [Node ls] proves that a a "flat" node containing the list of files [ls]
       exists in the store.
-      - In proofs with version 0, the length of [ls] is at most 256;
+
+      In proofs with [version.is_binary = true], the length of [ls] is at most
+      2.
+
+      In proofs with [version.is_binary = false], the length of [ls] is at most
+      256.
 
       [Blinded_node h] proves that a node with hash [h] exists in the store.
 
@@ -394,10 +430,19 @@ module type PROOF = sig
       [after p]. [state p]'s hash is [before p], and [state p] contains
       the minimal information for the computation to reach [after p].
 
-      [version p] is the proof version, currently only version 0 is supported.
-      - Proofs with version 0 have top-level nodes of size 256. Whenever a node
-        has more than 256 entries, it is converted into an inode tree with
-        an branching factor of 32. *)
+      [version p] is the proof version, it packs several informations.
+
+      [is_stream] discriminates between the stream proofs and the tree proofs.
+
+      [is_binary] discriminates between proofs emitted from
+      [Tezos_context(_memory).Context_binary] and
+      [Tezos_context(_memory).Context].
+
+      It will also help discriminate between the data encoding techniques used.
+
+      The version is meant to be decoded and encoded using the
+      {!Tezos_context_helpers.Context.decode_proof_version} and
+      {!Tezos_context_helpers.Context.encode_proof_version}. *)
   type 'a t = {
     version : int;
     before : kinded_hash;
@@ -444,18 +489,29 @@ module type T = sig
       disconnected from any storage (i.e. [index]). It is possible to run
       operations on it as long as they don't require loading shallowed subtrees.
 
-      The result is [Error _] if the proof is rejected:
+      The result is [Error (`Msg _)] if the proof is rejected:
       - For tree proofs: when [p.before] is different from the hash of
         [p.state];
       - For tree and stream proofs: when [p.after] is different from the hash
         of [f p.state];
-      - For tree and stream proofs: when [f p.state] tries to access paths
-        invalid paths in [p.state];
-      - For stream proofs: when the proof is not empty once [f] is done. *)
+      - For tree proofs: when [f p.state] tries to access invalid paths in
+        [p.state];
+      - For stream proofs: when the proof is not consumed in the exact same
+        order it was produced;
+      - For stream proofs: when the proof is too short or not empty once [f] is
+        done.
+
+      @raise Failure if the proof version is invalid or incompatible with the
+      verifier. *)
   type ('proof, 'result) verifier :=
     'proof ->
     (tree -> (tree * 'result) Lwt.t) ->
-    (tree * 'result, [`Msg of string]) result Lwt.t
+    ( tree * 'result,
+      [ `Proof_mismatch of string
+      | `Stream_too_long of string
+      | `Stream_too_short of string ] )
+    result
+    Lwt.t
 
   (** The type for tree proofs.
 
@@ -474,6 +530,10 @@ module type T = sig
 
   (** [verify_stream] is the verifier of stream proofs. *)
   val verify_stream_proof : (stream_proof, 'a) verifier
+
+  (** The equality function for context configurations. If two context have the
+      same configuration, they will generate the same context hashes. *)
+  val equal_config : config -> config -> bool
 
   (** Internally used in {!Storage_functors} to escape from a view. *)
   val project : t -> root

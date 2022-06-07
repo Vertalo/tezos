@@ -32,6 +32,8 @@ type temporary_file_mode = Delete | Delete_if_successful | Keep
 
 type loop_mode = Infinite | Count of int
 
+type on_unknown_regression_files_mode = Warn | Ignore | Fail | Delete
+
 type options = {
   mutable color : bool;
   mutable log_level : log_level;
@@ -51,7 +53,7 @@ type options = {
   mutable retry : int;
   mutable regression_dir : string;
   mutable reset_regressions : bool;
-  mutable delete_unknown_regression_files : bool;
+  mutable on_unknown_regression_files_mode : on_unknown_regression_files_mode;
   mutable loop_mode : loop_mode;
   mutable time : bool;
   mutable starting_port : int;
@@ -63,6 +65,7 @@ type options = {
   mutable junit : string option;
   mutable skip : int;
   mutable only : int option;
+  mutable test_args : string String_map.t;
 }
 
 let options =
@@ -85,7 +88,7 @@ let options =
     retry = 0;
     regression_dir = "tezt/_regressions";
     reset_regressions = false;
-    delete_unknown_regression_files = false;
+    on_unknown_regression_files_mode = Warn;
     loop_mode = Count 1;
     time = false;
     starting_port = 16384;
@@ -97,6 +100,7 @@ let options =
     junit = None;
     skip = 0;
     only = None;
+    test_args = String_map.empty;
   }
 
 let () = at_exit @@ fun () -> Option.iter close_out options.log_file
@@ -166,6 +170,35 @@ let init ?args () =
   let set_only value =
     if value <= 0 then raise (Arg.Bad "--only must be at least one") ;
     options.only <- Some value
+  in
+  let set_on_unknown_regression_files_mode value =
+    options.on_unknown_regression_files_mode <-
+      (match value with
+      | "warn" -> Warn
+      | "ignore" -> Ignore
+      | "delete" -> Delete
+      | "fail" -> Fail
+      | _ ->
+          raise
+            (Arg.Bad
+               (Format.asprintf
+                  "--on-unknown-regression-files must be either `warn`, \
+                   `ignore`, `delete` or `fail` (was `%s`)."
+                  value)))
+  in
+  let add_test_arg value =
+    let len = String.length value in
+    let rec find_equal i =
+      if i >= len then None
+      else if value.[i] = '=' then Some i
+      else find_equal (i + 1)
+    in
+    let (parameter, value) =
+      match find_equal 0 with
+      | None -> (value, "true")
+      | Some i -> (String.sub value 0 i, String.sub value (i + 1) (len - i - 1))
+    in
+    options.test_args <- String_map.add parameter value options.test_args
   in
   let spec =
     Arg.align
@@ -252,21 +285,30 @@ let init ?args () =
           Arg.String
             (fun file -> options.files_to_run <- file :: options.files_to_run),
           "<FILE> Same as --file." );
-        ( "--test",
+        ( "--title",
           Arg.String
             (fun title -> options.tests_to_run <- title :: options.tests_to_run),
           "<TITLE> Only run tests which are exactly entitled TITLE (see \
            SELECTING TESTS)." );
+        ( "--test",
+          Arg.String
+            (fun title -> options.tests_to_run <- title :: options.tests_to_run),
+          "<TITLE> Same as --title." );
         ( "-t",
           Arg.String
             (fun title -> options.tests_to_run <- title :: options.tests_to_run),
-          "<TITLE> Same as --test." );
-        ( "--not-test",
+          "<TITLE> Same as --title." );
+        ( "--not-title",
           Arg.String
             (fun title ->
               options.tests_not_to_run <- title :: options.tests_not_to_run),
           "<TITLE> Only run tests which are not exactly entitled TITLE (see \
            SELECTING TESTS)." );
+        ( "--not-test",
+          Arg.String
+            (fun title ->
+              options.tests_not_to_run <- title :: options.tests_not_to_run),
+          "<TITLE> Same as --not-title." );
         ( "--global-timeout",
           Arg.Float (fun delay -> options.global_timeout <- Some delay),
           "<SECONDS> Fail if the set of tests takes more than SECONDS to run."
@@ -287,12 +329,17 @@ let init ?args () =
           Arg.Unit (fun () -> options.reset_regressions <- true),
           " Remove regression test outputs if they exist, and regenerate them."
         );
-        ( "--delete-unknown-regression-files",
-          Arg.Unit (fun () -> options.delete_unknown_regression_files <- true),
-          " Delete regression test outputs that are not declared by any test. \
-           To check which files would be deleted, run without this option \
-           first. If there are files that would be deleted by this flag, a \
-           warning is emitted for each of them." );
+        ( "--on-unknown-regression-files",
+          Arg.String set_on_unknown_regression_files_mode,
+          "<MODE> How to handle regression test outputs that are not declared \
+           by any test. MODE should be either 'warn', 'ignore', 'fail' or \
+           'delete'. If set to 'warn', emit a warning for unknown output \
+           files. If set to 'ignore', ignore unknown output files. If set to \
+           'fail', terminate execution with exit code 1 and without running \
+           any further action when unknown output files are found. If set to \
+           'delete', delete unknown output files. To check which files would \
+           be deleted, run with this option set to 'warn', which is the \
+           default." );
         ( "--loop",
           Arg.Unit (fun () -> options.loop_mode <- Infinite),
           " Restart from the beginning once all tests are done. All tests are \
@@ -375,6 +422,14 @@ let init ?args () =
           Arg.Int set_only,
           "<COUNT> Only run the first COUNT tests. This filter is applied \
            after --job and --skip." );
+        ( "--test-arg",
+          Arg.String add_test_arg,
+          "<PARAMETER>=<VALUE> Pass a generic argument to tests. Tests can get \
+           this argument with Cli.get. --test-arg <PARAMETER> is a short-hand \
+           for: --test-arg <PARAMETER>=true" );
+        ( "-a",
+          Arg.String add_test_arg,
+          "<PARAMETER>=<VALUE> Same as --test-arg." );
       ]
   in
   let usage =
@@ -392,7 +447,7 @@ let init ?args () =
        negate a tag, prefix it with a slash: /\n\n\
       \  The title of a test is given by the ~title argument of Test.run. It \
        is what is printed after [SUCCESS] (or [FAILURE] or [ABORTED]) in the \
-       reports. Use --test (respectively --not-test) to select (respectively \
+       reports. Use --title (respectively --not-title) to select (respectively \
        unselect) a test by its title on the command-line.\n\n\
       \  The file in which a test is implemented is specified by the ~__FILE__ \
        argument of Test.run. In other words, it is the name of the file in \
@@ -428,3 +483,29 @@ let init ?args () =
   | Arg.Help msg ->
       Printf.printf "%s" msg ;
       exit 0
+
+let () = init ()
+
+let get ?default parse parameter =
+  match String_map.find_opt parameter options.test_args with
+  | Some value -> (
+      match parse value with
+      | None -> failwith (sf "invalid value for -a %s: %s" parameter value)
+      | Some value -> value)
+  | None -> (
+      match default with
+      | None ->
+          failwith
+            (sf
+               "missing test argument %s, please specify it with: -a %s=<VALUE>"
+               parameter
+               parameter)
+      | Some default -> default)
+
+let get_bool ?default parameter = get ?default bool_of_string_opt parameter
+
+let get_int ?default parameter = get ?default int_of_string_opt parameter
+
+let get_float ?default parameter = get ?default float_of_string_opt parameter
+
+let get_string ?default parameter = get ?default Option.some parameter

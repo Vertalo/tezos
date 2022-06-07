@@ -27,11 +27,15 @@ let protocol = Protocol.Alpha
 
 let protocol_constants = Protocol.Constants_mainnet
 
-let all_bootstraps =
-  List.filter
-    (fun {Account.alias; _} -> alias <> "activator")
-    Constant.all_secret_keys
+let all_bootstraps = Account.Bootstrap.keys |> Array.to_list
 
 let originating_bootstrap = Stdlib.List.hd all_bootstraps
 
-let delegates = List.map (fun {Account.alias; _} -> alias) all_bootstraps
+let make_delegates n =
+  Stdlib.List.init n (fun x -> Printf.sprintf "bootstrap%d" (x + 1))
+
+let default_bootstraps_count = Account.Bootstrap.keys |> Array.length
+
+let lifted_limits_tps = 1_000
+
+let gas_safety_margin = 100

@@ -310,15 +310,15 @@ let originated_contract op =
 
 exception Impossible
 
-let contract_origination ?counter ?delegate ~script ?(preorigination = None)
-    ?public_key ?credit ?fee ?gas_limit ?storage_limit ctxt source =
+let contract_origination ?counter ?delegate ~script ?public_key ?credit ?fee
+    ?gas_limit ?storage_limit ctxt source =
   Context.Contract.manager ctxt source >>=? fun account ->
   let default_credit = Tez.of_mutez @@ Int64.of_int 1000001 in
   let default_credit =
     WithExceptions.Option.to_exn ~none:Impossible default_credit
   in
   let credit = Option.value ~default:default_credit credit in
-  let operation = Origination {delegate; script; credit; preorigination} in
+  let operation = Origination {delegate; script; credit} in
   manager_operation
     ?counter
     ?public_key
@@ -453,7 +453,7 @@ let seed_nonce_revelation ctxt level nonce =
   }
 
 let proposals ctxt (pkh : Contract.t) proposals =
-  Context.Contract.pkh pkh >>=? fun source ->
+  let source = Context.Contract.pkh pkh in
   Context.Vote.get_current_period ctxt
   >>=? fun {voting_period = {index; _}; _} ->
   let op = Proposals {source; period = index; proposals} in
@@ -461,7 +461,7 @@ let proposals ctxt (pkh : Contract.t) proposals =
   sign account.sk ctxt (Contents_list (Single op))
 
 let ballot ctxt (pkh : Contract.t) proposal ballot =
-  Context.Contract.pkh pkh >>=? fun source ->
+  let source = Context.Contract.pkh pkh in
   Context.Vote.get_current_period ctxt
   >>=? fun {voting_period = {index; _}; _} ->
   let op = Ballot {source; period = index; proposal; ballot} in
@@ -538,23 +538,9 @@ let tx_rollup_submit_batch ?counter ?fee ?burn_limit ?gas_limit ?storage_limit
   Context.Contract.manager ctxt source >|=? fun account ->
   sign account.sk ctxt to_sign_op
 
-let sc_rollup_origination ?counter ?fee ?gas_limit ?storage_limit ctxt
-    (src : Contract.t) kind boot_sector =
-  manager_operation
-    ?counter
-    ?fee
-    ?gas_limit
-    ?storage_limit
-    ~source:src
-    ctxt
-    (Sc_rollup_originate {kind; boot_sector})
-  >>=? fun to_sign_op ->
-  Context.Contract.manager ctxt src >|=? fun account ->
-  sign account.sk ctxt to_sign_op
-
 let tx_rollup_commit ?counter ?fee ?gas_limit ?storage_limit ctxt
     (source : Contract.t) (tx_rollup : Tx_rollup.t)
-    (commitment : Tx_rollup_commitment.t) =
+    (commitment : Tx_rollup_commitment.Full.t) =
   manager_operation
     ?counter
     ?fee
@@ -607,4 +593,121 @@ let tx_rollup_remove_commitment ?counter ?fee ?gas_limit ?storage_limit ctxt
     (Tx_rollup_remove_commitment {tx_rollup})
   >>=? fun to_sign_op ->
   Context.Contract.manager ctxt source >|=? fun account ->
+  sign account.sk ctxt to_sign_op
+
+let tx_rollup_dispatch_tickets ?counter ?fee ?gas_limit ?storage_limit ctxt
+    ~(source : Contract.t) ~message_index ~message_result_path tx_rollup level
+    context_hash tickets_info =
+  manager_operation
+    ?counter
+    ?fee
+    ?gas_limit
+    ?storage_limit
+    ~source
+    ctxt
+    (Tx_rollup_dispatch_tickets
+       {
+         tx_rollup;
+         level;
+         context_hash;
+         message_index;
+         tickets_info;
+         message_result_path;
+       })
+  >>=? fun to_sign_op ->
+  Context.Contract.manager ctxt source >|=? fun account ->
+  sign account.sk ctxt to_sign_op
+
+let transfer_ticket ?counter ?fee ?gas_limit ?storage_limit ctxt
+    ~(source : Contract.t) ~contents ~ty ~ticketer amount ~destination
+    entrypoint =
+  manager_operation
+    ?counter
+    ?fee
+    ?gas_limit
+    ?storage_limit
+    ~source
+    ctxt
+    (Transfer_ticket {contents; ty; ticketer; amount; destination; entrypoint})
+  >>=? fun to_sign_op ->
+  Context.Contract.manager ctxt source >|=? fun account ->
+  sign account.sk ctxt to_sign_op
+
+let tx_rollup_reject ?counter ?fee ?gas_limit ?storage_limit ctxt
+    (source : Contract.t) (tx_rollup : Tx_rollup.t) (level : Tx_rollup_level.t)
+    (message : Tx_rollup_message.t) ~(message_position : int)
+    ~(message_path : Tx_rollup_inbox.Merkle.path) ~message_result_hash
+    ~message_result_path ~(proof : Tx_rollup_l2_proof.t)
+    ~(previous_message_result : Tx_rollup_message_result.t)
+    ~previous_message_result_path =
+  manager_operation
+    ?counter
+    ?fee
+    ?gas_limit
+    ?storage_limit
+    ~source
+    ctxt
+    (Tx_rollup_rejection
+       {
+         tx_rollup;
+         level;
+         message;
+         message_position;
+         message_path;
+         message_result_hash;
+         proof;
+         previous_message_result;
+         previous_message_result_path;
+         message_result_path;
+       })
+  >>=? fun to_sign_op ->
+  Context.Contract.manager ctxt source >|=? fun account ->
+  sign account.sk ctxt to_sign_op
+
+let originated_sc_rollup op =
+  let packed = Operation.hash_packed op in
+  let nonce = Origination_nonce.Internal_for_tests.initial packed in
+  Sc_rollup.Internal_for_tests.originated_sc_rollup nonce
+
+let sc_rollup_origination ?counter ?fee ?gas_limit ?storage_limit ctxt
+    (src : Contract.t) kind boot_sector =
+  manager_operation
+    ?counter
+    ?fee
+    ?gas_limit
+    ?storage_limit
+    ~source:src
+    ctxt
+    (Sc_rollup_originate {kind; boot_sector})
+  >>=? fun to_sign_op ->
+  Context.Contract.manager ctxt src >|=? fun account ->
+  let op = sign account.sk ctxt to_sign_op in
+  originated_sc_rollup op |> fun addr -> (op, addr)
+
+let sc_rollup_publish ?counter ?fee ?gas_limit ?storage_limit ctxt
+    (src : Contract.t) rollup commitment =
+  manager_operation
+    ?counter
+    ?fee
+    ?gas_limit
+    ?storage_limit
+    ~source:src
+    ctxt
+    (Sc_rollup_publish {rollup; commitment})
+  >>=? fun to_sign_op ->
+  Context.Contract.manager ctxt src >|=? fun account ->
+  sign account.sk ctxt to_sign_op
+
+let sc_rollup_cement ?counter ?fee ?gas_limit ?storage_limit ctxt
+    (src : Contract.t) rollup commitment =
+  manager_operation
+    ?counter
+    ?fee
+    ?gas_limit
+    ?storage_limit
+    ~source:src
+    ctxt
+    (Sc_rollup_cement {rollup; commitment})
+  >>=? fun to_sign_op ->
+  Context.Contract.manager ctxt src >|=? fun account ->
   sign account.sk ctxt to_sign_op

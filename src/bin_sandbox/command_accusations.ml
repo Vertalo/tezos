@@ -378,7 +378,7 @@ let simple_double_endorsement ~starting_level ?generate_kiln_config ~state
     ~protocol ~base_port node_exec client_exec () =
   (* skip for alpha/Tenderbake *)
   match protocol.Tezos_protocol.kind with
-  | `Ithaca | `Alpha ->
+  | `Ithaca | `Jakarta | `Alpha ->
       (* The same reason as for tests_python/tests_alpha/test_double_endorsement.py applies here *)
       let* () =
         say
@@ -981,6 +981,6 @@ let cmd () =
                `Blocks [pf "* $(b,`%s`): $(i,%s)." n tit; `Noblank; m]));
       ]
     in
-    info ~man ~doc "accusations"
+    Cmd.info ~man ~doc "accusations"
   in
-  (term, info)
+  Cmd.v info term

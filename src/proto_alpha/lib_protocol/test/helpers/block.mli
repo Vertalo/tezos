@@ -68,7 +68,7 @@ module Forge : sig
   val contents :
     ?proof_of_work_nonce:Bytes.t ->
     ?seed_nonce_hash:Nonce_hash.t ->
-    ?liquidity_baking_escape_vote:bool ->
+    ?liquidity_baking_toggle_vote:Liquidity_baking.liquidity_baking_toggle_vote ->
     payload_hash:Block_payload_hash.t ->
     payload_round:Round.t ->
     unit ->
@@ -86,7 +86,7 @@ module Forge : sig
     ?policy:baker_policy ->
     ?timestamp:Timestamp.time ->
     ?operations:Operation.packed list ->
-    ?liquidity_baking_escape_vote:bool ->
+    ?liquidity_baking_toggle_vote:Liquidity_baking.liquidity_baking_toggle_vote ->
     t ->
     header tzresult Lwt.t
 
@@ -101,7 +101,7 @@ module Forge : sig
   val sign_header : header -> Block_header.block_header tzresult Lwt.t
 end
 
-val check_constants_consistency : Constants.parametric -> unit tzresult Lwt.t
+val check_constants_consistency : Constants.Parametric.t -> unit tzresult Lwt.t
 
 (** [genesis <opts> accounts] : generates an initial block with the
     given constants [<opts>] and initializes [accounts] with their
@@ -122,6 +122,8 @@ val genesis :
   ?blocks_per_cycle:int32 ->
   ?cycles_per_voting_period:int32 ->
   ?tx_rollup_enable:bool ->
+  ?tx_rollup_sunset_level:int32 ->
+  ?tx_rollup_origination_size:int ->
   ?sc_rollup_enable:bool ->
   (Account.t * Tez.tez) list ->
   block tzresult Lwt.t
@@ -184,7 +186,7 @@ val bake :
   ?timestamp:Timestamp.time ->
   ?operation:Operation.packed ->
   ?operations:Operation.packed list ->
-  ?liquidity_baking_escape_vote:bool ->
+  ?liquidity_baking_toggle_vote:Liquidity_baking.liquidity_baking_toggle_vote ->
   t ->
   t tzresult Lwt.t
 
@@ -192,7 +194,7 @@ val bake :
 val bake_n :
   ?baking_mode:baking_mode ->
   ?policy:baker_policy ->
-  ?liquidity_baking_escape_vote:bool ->
+  ?liquidity_baking_toggle_vote:Liquidity_baking.liquidity_baking_toggle_vote ->
   int ->
   t ->
   block tzresult Lwt.t
@@ -202,7 +204,7 @@ val bake_n :
 val bake_n_with_all_balance_updates :
   ?baking_mode:baking_mode ->
   ?policy:baker_policy ->
-  ?liquidity_baking_escape_vote:bool ->
+  ?liquidity_baking_toggle_vote:Liquidity_baking.liquidity_baking_toggle_vote ->
   int ->
   t ->
   (block * Alpha_context.Receipt.balance_updates) tzresult Lwt.t
@@ -221,14 +223,14 @@ val bake_n_with_origination_results :
   tzresult
   Lwt.t
 
-(** Version of bake_n that returns the liquidity baking escape EMA after [n] blocks. **)
-val bake_n_with_liquidity_baking_escape_ema :
+(** Version of bake_n that returns the liquidity baking toggle EMA after [n] blocks. **)
+val bake_n_with_liquidity_baking_toggle_ema :
   ?baking_mode:baking_mode ->
   ?policy:baker_policy ->
-  ?liquidity_baking_escape_vote:bool ->
+  ?liquidity_baking_toggle_vote:Liquidity_baking.liquidity_baking_toggle_vote ->
   int ->
   t ->
-  (block * Alpha_context.Liquidity_baking.escape_ema) tzresult Lwt.t
+  (block * Alpha_context.Liquidity_baking.Toggle_EMA.t) tzresult Lwt.t
 
 val current_cycle : t -> Cycle.t tzresult Lwt.t
 
@@ -257,9 +259,11 @@ val prepare_initial_context_params :
   ?blocks_per_cycle:int32 ->
   ?cycles_per_voting_period:int32 ->
   ?tx_rollup_enable:bool ->
+  ?tx_rollup_sunset_level:int32 ->
+  ?tx_rollup_origination_size:int ->
   ?sc_rollup_enable:bool ->
   (Account.t * Tez.t) list ->
-  ( Constants.parametric * Block_header.shell_header * Block_hash.t,
+  ( Constants.Parametric.t * Block_header.shell_header * Block_hash.t,
     tztrace )
   result
   Lwt.t
