@@ -16,13 +16,7 @@ fi
 
 
 export OPAMYES="${OPAMYES:=true}"
-export OPAMSOLVERTIMEOUT=1200
 
-env C_INCLUDE_PATH=/usr/local/include opam pin add tezos-lmdb https://github.com/vertalo/ocaml-lmdb.git
-opam pin add pyml https://github.com/thierry-martinez/pyml.git#20210924
-opam pin add bls12-381.1.1.0 git+https://gitlab.com/dannywillems/ocaml-bls12-381.git#e09af447e3a6757f490160e2c87578b1731dc786 --no-action
-opam pin add bls12-381-unix.1.1.0 git+https://gitlab.com/dannywillems/ocaml-bls12-381.git#e09af447e3a6757f490160e2c87578b1731dc786 --no-action
-opam pin add lwt 5.4.2
 ## In another ideal world, this list should be extracted from the pinned
 ## packages and filter only conf-* packages
 
