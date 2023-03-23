@@ -15,8 +15,8 @@
 
 export ocaml_version=4.14.1
 export opam_version=2
-export recommended_rust_version=1.60.0
-export recommended_node_version=16.18.1
+export recommended_rust_version=${TEZOS_RUST_VERSION:=1.60.0}
+export recommended_node_version=${TEZOS_NODE_VERSION:=16.18.1}
 
 ## full_opam_repository is a commit hash of the public OPAM repository, i.e.
 ## https://github.com/ocaml/opam-repository
@@ -24,8 +24,8 @@ export full_opam_repository_tag=83a6f7bc4a32e413840cf4a20afb1557fca38a5e
 
 ## opam_repository is an additional, tezos-specific opam repository.
 ## This value MUST be the same as `build_deps_image_version` in `.gitlab/ci/templates.yml
-export opam_repository_url=https://gitlab.com/tezos/opam-repository
-export opam_repository_tag="${OPAM_REPOSITORY_TAG:-b95158f1d22c9aaf9cbf5450299dfbdc18b294be}"
+export opam_repository_url=https://github.com/Vertalo/opam-repository
+export opam_repository_tag="${OPAM_REPOSITORY_TAG:-44c9ca54e49ec7da074a3c7759c69a1c11a1843d}"
 export opam_repository_git="$opam_repository_url.git"
 export opam_repository="$opam_repository_git"\#"$opam_repository_tag"
 
