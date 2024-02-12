@@ -31,7 +31,7 @@ export full_opam_repository_tag=cab7b39e74361fc16be1584ba4065eed73012151
 ## opam_repository is an additional, tezos-specific opam repository.
 ## This value MUST be the same as `build_deps_image_version` in `.gitlab-ci.yml`
 export opam_repository_url=https://github.com/Vertalo/opam-repository
-export opam_repository_tag="${OPAM_REPOSITORY_TAG:-bf038755701bd4422a1f11a3e3f72b426aeea912}"
+export opam_repository_tag="${OPAM_REPOSITORY_TAG:-046655917d82f411e555c876656eae75fcaa4e55}"
 export opam_repository_git="$opam_repository_url.git"
 export opam_repository="$opam_repository_git"\#"$opam_repository_tag"
 
@@ -40,4 +40,4 @@ export COVERAGE_OUTPUT=_coverage_output
 
 ## The version of the rust-specific image which can be used to build Rust
 ## artifacts of this repository.
-export rust_toolchain_image_version="rust-toolchain--${opam_repository_tag}"
+export rust_toolchain_image_version="rust-toolchain--f84b4412bf92f81fa4d554aed624fa0a6a72ec96"
