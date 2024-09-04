@@ -15,8 +15,8 @@
 
 export ocaml_version=4.14.1
 export opam_version=2
-export recommended_rust_version=1.71.1
-export recommended_node_version=18.18.2
+export recommended_rust_version=${TEZOS_RUST_VERSION:=1.71.1}
+export recommended_node_version=${TEZOS_NODE_VERSION:=18.18.2}
 
 # The Alpine minor version used to build the opam-repository images
 # and used to run the `trigger` job in the CI. This value SHOULD
@@ -26,7 +26,7 @@ export alpine_version='3.18'
 
 ## full_opam_repository is a commit hash of the public OPAM repository, i.e.
 ## https://github.com/ocaml/opam-repository
-export full_opam_repository_tag=518f55a1ee5da870035b9593f98db03f43ce7f5f
+export full_opam_repository_tag=f09a88ef5219ec23700b8274a6f8a91d4d2cf8cc
 
 ## opam_repository is an additional, tezos-specific opam repository.
 ## This value MUST be reflected in the `build_deps_image_version` variable
