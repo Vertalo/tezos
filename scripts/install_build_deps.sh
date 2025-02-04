@@ -32,7 +32,7 @@ opamswitch="$OPAMSWITCH"
 unset OPAMSWITCH
 
 echo "Use opam repository commit: $opam_repository_tag"
-opam_repository="https://github.com/ocaml/opam-repository.git#$opam_repository_tag"
+opam_repository="https://github.com/Vertalo/opam-repo.git#$opam_repository_tag"
 opam repository set-url tezos --dont-select "$opam_repository" ||
   opam repository add tezos --dont-select "$opam_repository" > /dev/null 2>&1
 
