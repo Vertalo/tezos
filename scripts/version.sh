@@ -19,8 +19,8 @@ export opam_version_major=2
 # The recommended rust version should equal the version set in the
 # root rust-toolchain file, such that:
 # rust-toolchain == recommended_rust_version
-export recommended_rust_version=1.88.0
-export recommended_node_version=18.18.2
+export recommended_rust_version=${TEZOS_RUST_VERSION:=1.88.0}
+export recommended_node_version=${TEZOS_NODE_VERSION:=18.18.2}
 
 ## opam_repository is a commit hash of the public opam repository, i.e.
 ## https://github.com/ocaml/opam-repository
