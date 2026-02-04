@@ -24,7 +24,7 @@ export recommended_node_version=${TEZOS_NODE_VERSION:=18.18.2}
 
 ## opam_repository is a commit hash of the public opam repository, i.e.
 ## https://github.com/ocaml/opam-repository
-export opam_repository_tag=42384784bf658d70e83e953f946bb394c79bc377
+export opam_repository_tag=edf4455ea32e2f9c9594d9cb2f2f937801e2aee1
 
 # SHA-256 hashes of the DAL SRSs, as used in 'scripts/install_dal_trusted_setup.sh' to verify
 # integrity of downloaded SRS.
